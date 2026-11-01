@@ -12,9 +12,9 @@ pub struct AudioManager {
 impl AudioManager {
     pub async fn new() -> Self {
         // Embed classic authentic Blobby Volley audio bytes
-        let hit_bytes = include_bytes!("../../data/sounds/bums.wav");
-        let whistle_bytes = include_bytes!("../../data/sounds/pfiff.wav");
-        let score_bytes = include_bytes!("../../data/sounds/chat.wav");
+        let hit_bytes = include_bytes!("../assets/sounds/bums.wav");
+        let whistle_bytes = include_bytes!("../assets/sounds/pfiff.wav");
+        let score_bytes = include_bytes!("../assets/sounds/chat.wav");
 
         let sound_hit = load_sound_from_bytes(hit_bytes).await.ok();
         let sound_whistle = load_sound_from_bytes(whistle_bytes).await.ok();
