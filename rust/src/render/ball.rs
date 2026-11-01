@@ -136,3 +136,4 @@ pub fn render_ball(ball: &Ball, trail: &BallTrail) {
     // Outer anti-aliased rim ring
     draw_circle_lines(cx, cy, r, 2.0, Color::new(0.15, 0.2, 0.3, 0.6));
 }
+

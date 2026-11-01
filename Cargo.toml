@@ -17,6 +17,10 @@ path = "rust/src/lib.rs"
 name = "gameplay_tests"
 path = "rust/tests/gameplay_tests.rs"
 
+[[test]]
+name = "network_tests"
+path = "rust/tests/network_tests.rs"
+
 [dependencies]
 macroquad = { version = "0.4", features = ["audio"] }
 glam = "0.27"

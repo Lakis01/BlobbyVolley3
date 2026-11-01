@@ -79,3 +79,4 @@ impl AudioManager {
         self.is_muted = !self.is_muted;
     }
 }
+

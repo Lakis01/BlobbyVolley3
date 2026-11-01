@@ -1,5 +1,6 @@
 // Blobby Volley 3 - Deterministic Physics Engine
 use glam::Vec2;
+use serde::{Serialize, Deserialize};
 use crate::constants::*;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -21,7 +22,7 @@ impl PlayerSide {
     }
 }
 
-#[derive(Debug, Clone, Copy, Default)]
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize)]
 pub struct PlayerInput {
     pub left: bool,
     pub right: bool,

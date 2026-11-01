@@ -31,3 +31,4 @@ pub fn read_player2_input() -> PlayerInput {
 
     input
 }
+

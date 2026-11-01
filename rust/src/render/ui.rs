@@ -1,4 +1,4 @@
-// Blobby Volley 3 - 2026 Remastered Glassmorphism HUD, Menus & Victory UI
+// Blobby Volley 3 - 2026 Remastered Glassmorphism HUD, Menus, Online Lobby & Chat UI
 use macroquad::prelude::*;
 use crate::physics::PlayerSide;
 use crate::rules::{GameLogic, RuleMode};
@@ -12,6 +12,8 @@ pub enum GameMode {
     SinglePlayer,
     TwoPlayerLocal,
     BotVsBot,
+    HostOnline,
+    JoinOnline,
 }
 
 impl GameMode {
@@ -20,6 +22,8 @@ impl GameMode {
             GameMode::SinglePlayer => "1P vs CPU",
             GameMode::TwoPlayerLocal => "2 Players (Local)",
             GameMode::BotVsBot => "CPU vs CPU",
+            GameMode::HostOnline => "Host Online Match",
+            GameMode::JoinOnline => "Join Online Match",
         }
     }
 
@@ -27,7 +31,9 @@ impl GameMode {
         match self {
             GameMode::SinglePlayer => GameMode::TwoPlayerLocal,
             GameMode::TwoPlayerLocal => GameMode::BotVsBot,
-            GameMode::BotVsBot => GameMode::SinglePlayer,
+            GameMode::BotVsBot => GameMode::HostOnline,
+            GameMode::HostOnline => GameMode::JoinOnline,
+            GameMode::JoinOnline => GameMode::SinglePlayer,
         }
     }
 }
@@ -157,7 +163,7 @@ pub fn render_main_menu(
     );
 
     // Menu Card
-    let card_w = 540.0;
+    let card_w = 560.0;
     let card_h = 360.0;
     let card_x = (VIRTUAL_WIDTH - card_w) * 0.5;
     let card_y = 175.0;
@@ -222,7 +228,7 @@ pub fn render_main_menu(
     }
 
     // Footer Controls Guide
-    let guide = "Controls:  P1 [W/A/D or Gamepad]  |  P2 [Arrow Keys]  |  Navigate [Up/Down, Left/Right]";
+    let guide = "Controls: P1 [W/A/D or Gamepad] | P2 [Arrow Keys] | Online Chat [T] | Options [Left/Right]";
     let guide_dim = measure_text(guide, None, 14, 1.0);
     draw_text(
         guide,
@@ -231,6 +237,131 @@ pub fn render_main_menu(
         14.0,
         Color::new(0.7, 0.75, 0.85, 0.75),
     );
+}
+
+pub fn render_host_lobby(port: u16, local_ip: &str, is_connected: bool, time: f32) {
+    draw_rectangle(0.0, 0.0, VIRTUAL_WIDTH, VIRTUAL_HEIGHT, Color::new(0.04, 0.05, 0.1, 0.85));
+
+    let card_w = 520.0;
+    let card_h = 300.0;
+    let card_x = (VIRTUAL_WIDTH - card_w) * 0.5;
+    let card_y = (VIRTUAL_HEIGHT - card_h) * 0.5;
+
+    draw_rectangle(card_x, card_y, card_w, card_h, Color::new(0.08, 0.1, 0.18, 0.92));
+    draw_rectangle_lines(card_x, card_y, card_w, card_h, 2.0, Color::new(0.2, 0.8, 1.0, 0.7));
+
+    let title = "HOSTING ONLINE MATCH";
+    let title_dim = measure_text(title, None, 32, 1.0);
+    draw_text(title, (VIRTUAL_WIDTH - title_dim.width) * 0.5, card_y + 48.0, 32.0, Color::new(0.3, 0.9, 1.0, 1.0));
+
+    let info_ip = format!("Your Local LAN IP:  {}:{}", local_ip, port);
+    let info_port = format!("Blobby Volley Port: {}", port);
+    draw_text(&info_ip, card_x + 40.0, card_y + 110.0, 20.0, WHITE);
+    draw_text(&info_port, card_x + 40.0, card_y + 145.0, 20.0, Color::new(0.8, 0.85, 0.95, 0.8));
+
+    let pulse = (time * 4.0).sin().abs() * 0.3 + 0.7;
+    if is_connected {
+        let msg = "OPPONENT CONNECTED! STARTING...";
+        let msg_dim = measure_text(msg, None, 22, 1.0);
+        draw_text(msg, (VIRTUAL_WIDTH - msg_dim.width) * 0.5, card_y + 210.0, 22.0, Color::new(0.2, 1.0, 0.4, 1.0));
+    } else {
+        let msg = "Waiting for incoming connection...";
+        let msg_dim = measure_text(msg, None, 20, 1.0);
+        draw_text(msg, (VIRTUAL_WIDTH - msg_dim.width) * 0.5, card_y + 210.0, 20.0, Color::new(1.0, 0.85, 0.2, pulse));
+    }
+
+    let cancel = "Press Escape to Cancel and Return to Menu";
+    let cancel_dim = measure_text(cancel, None, 16, 1.0);
+    draw_text(cancel, (VIRTUAL_WIDTH - cancel_dim.width) * 0.5, card_y + card_h - 25.0, 16.0, Color::new(0.7, 0.75, 0.85, 0.7));
+}
+
+pub fn render_join_screen(ip_input: &str, is_connecting: bool, error: Option<&str>, time: f32) {
+    draw_rectangle(0.0, 0.0, VIRTUAL_WIDTH, VIRTUAL_HEIGHT, Color::new(0.04, 0.05, 0.1, 0.85));
+
+    let card_w = 520.0;
+    let card_h = 320.0;
+    let card_x = (VIRTUAL_WIDTH - card_w) * 0.5;
+    let card_y = (VIRTUAL_HEIGHT - card_h) * 0.5;
+
+    draw_rectangle(card_x, card_y, card_w, card_h, Color::new(0.08, 0.1, 0.18, 0.92));
+    draw_rectangle_lines(card_x, card_y, card_w, card_h, 2.0, Color::new(0.2, 0.8, 1.0, 0.7));
+
+    let title = "JOIN ONLINE MATCH";
+    let title_dim = measure_text(title, None, 32, 1.0);
+    draw_text(title, (VIRTUAL_WIDTH - title_dim.width) * 0.5, card_y + 48.0, 32.0, Color::new(0.3, 0.9, 1.0, 1.0));
+
+    let label = "Enter Server Address (IP:Port):";
+    draw_text(label, card_x + 40.0, card_y + 105.0, 20.0, WHITE);
+
+    // Text Input Box
+    let input_box_w = card_w - 80.0;
+    let input_box_h = 44.0;
+    let input_box_x = card_x + 40.0;
+    let input_box_y = card_y + 125.0;
+
+    draw_rectangle(input_box_x, input_box_y, input_box_w, input_box_h, Color::new(0.05, 0.08, 0.14, 0.95));
+    draw_rectangle_lines(input_box_x, input_box_y, input_box_w, input_box_h, 2.0, Color::new(0.3, 0.85, 1.0, 0.85));
+
+    let cursor = if (time * 3.0) as i32 % 2 == 0 { "_" } else { "" };
+    let display_text = format!("{}{}", ip_input, cursor);
+    draw_text(&display_text, input_box_x + 14.0, input_box_y + 30.0, 24.0, Color::new(1.0, 0.95, 0.3, 1.0));
+
+    // Status or Error
+    if is_connecting {
+        let msg = "Connecting to server...";
+        let msg_dim = measure_text(msg, None, 20, 1.0);
+        draw_text(msg, (VIRTUAL_WIDTH - msg_dim.width) * 0.5, card_y + 215.0, 20.0, Color::new(1.0, 0.85, 0.2, 1.0));
+    } else if let Some(err) = error {
+        let err_dim = measure_text(err, None, 18, 1.0);
+        draw_text(err, (VIRTUAL_WIDTH - err_dim.width) * 0.5, card_y + 215.0, 18.0, Color::new(1.0, 0.35, 0.35, 1.0));
+    } else {
+        let hint = "Press Enter to Connect";
+        let hint_dim = measure_text(hint, None, 18, 1.0);
+        draw_text(hint, (VIRTUAL_WIDTH - hint_dim.width) * 0.5, card_y + 215.0, 18.0, Color::new(0.4, 0.9, 1.0, 0.85));
+    }
+
+    let cancel = "Press Escape to Cancel";
+    let cancel_dim = measure_text(cancel, None, 16, 1.0);
+    draw_text(cancel, (VIRTUAL_WIDTH - cancel_dim.width) * 0.5, card_y + card_h - 25.0, 16.0, Color::new(0.7, 0.75, 0.85, 0.7));
+}
+
+pub fn render_chat_overlay(
+    chat_log: &[(String, String, f32)], // (sender, text, timestamp)
+    is_typing: bool,
+    input_text: &str,
+    time: f32,
+) {
+    let start_x = 24.0;
+    let mut curr_y = 100.0;
+
+    // Display recent chat messages (fade out after 8 seconds unless typing)
+    for (sender, text, ts) in chat_log.iter().rev().take(6) {
+        let age = time - ts;
+        if age < 8.0 || is_typing {
+            let alpha = if is_typing { 1.0 } else { (1.0 - (age - 6.0) / 2.0).clamp(0.0, 1.0) };
+            let msg = format!("{}: {}", sender, text);
+
+            let dim = measure_text(&msg, None, 16, 1.0);
+            draw_rectangle(start_x - 6.0, curr_y - 14.0, dim.width + 12.0, 22.0, Color::new(0.05, 0.08, 0.15, 0.75 * alpha));
+            draw_text(&msg, start_x, curr_y + 2.0, 16.0, Color::new(1.0, 1.0, 1.0, alpha));
+            curr_y += 26.0;
+        }
+    }
+
+    // If currently typing: show input bar at bottom
+    if is_typing {
+        let bar_w = 440.0;
+        let bar_h = 36.0;
+        let bar_x = 24.0;
+        let bar_y = VIRTUAL_HEIGHT - 60.0;
+
+        draw_rectangle(bar_x, bar_y, bar_w, bar_h, Color::new(0.06, 0.1, 0.18, 0.92));
+        draw_rectangle_lines(bar_x, bar_y, bar_w, bar_h, 1.5, Color::new(0.2, 0.85, 1.0, 0.9));
+
+        let cursor = if (time * 3.0) as i32 % 2 == 0 { "_" } else { "" };
+        let text_disp = format!("Chat: {}{}", input_text, cursor);
+        draw_text(&text_disp, bar_x + 10.0, bar_y + 24.0, 18.0, Color::new(1.0, 0.95, 0.3, 1.0));
+    }
 }
 
 pub fn render_pause_menu(selected_item: usize) {

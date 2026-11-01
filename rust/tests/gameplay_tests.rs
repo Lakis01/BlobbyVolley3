@@ -141,3 +141,66 @@ fn test_ai_trajectory_estimation() {
     assert!(target_x > 200.0, "Ball moving right should have target_x > 200");
     assert!(ticks > 0.0, "Ticks must be positive");
 }
+
+#[test]
+fn test_bot_vs_bot_rally_simulation() {
+    let mut physics = PhysicWorld::new();
+    let mut logic = GameLogic::new(RuleMode::Modern, 15);
+    physics.reset_ball(Some(PlayerSide::Left));
+    logic.on_serve();
+
+    let mut bot_master = BotController::new(PlayerSide::Left, AiDifficulty::Master);
+    let mut bot_reduced = BotController::new(PlayerSide::Right, AiDifficulty::Pro);
+
+    let mut total_blob_hits = 0;
+    let mut longest_rally = 0;
+    let mut current_rally = 0;
+
+    for _step in 0..4000 {
+        let p1_input = bot_master.update(&physics, logic.touches[0], logic.serving_player, logic.is_game_running);
+        let p2_input = bot_reduced.update(&physics, logic.touches[1], logic.serving_player, logic.is_game_running);
+
+        physics.step(p1_input, p2_input, logic.is_ball_valid, logic.is_game_running);
+        logic.step(PHYSICS_DT);
+
+        let events = physics.take_events();
+        for event in events {
+            match event {
+                blobby_core::physics::MatchEvent::BallHitBlob { player, .. } => {
+                    logic.on_ball_hits_blob(player);
+                    total_blob_hits += 1;
+                    current_rally += 1;
+                    if current_rally > longest_rally {
+                        longest_rally = current_rally;
+                    }
+                }
+                blobby_core::physics::MatchEvent::BallHitGround { side } => {
+                    logic.on_ball_hits_ground(side);
+                    current_rally = 0;
+                }
+                blobby_core::physics::MatchEvent::BallHitWall { side } => {
+                    logic.on_ball_hits_wall(side);
+                }
+                blobby_core::physics::MatchEvent::BallHitNet { side } => {
+                    logic.on_ball_hits_net(side);
+                }
+                blobby_core::physics::MatchEvent::BallHitNetTop => {
+                    logic.on_ball_hits_net(PlayerSide::Left);
+                }
+            }
+        }
+
+        if logic.can_start_round(&physics) {
+            physics.reset_ball(Some(logic.serving_player));
+            logic.on_serve();
+            bot_master.reset_rally();
+            bot_reduced.reset_rally();
+        }
+    }
+
+    println!("Simulation 4000 ticks (~53s):");
+    println!("Total blob hits: {}", total_blob_hits);
+    println!("Longest rally: {} hits", longest_rally);
+    println!("Score: Master (Left) {} - {} Pro (Right)", logic.scores[0], logic.scores[1]);
+    assert!(total_blob_hits >= 25, "Master and Pro bots should produce competitive rallies (got {} hits)", total_blob_hits);
+}
