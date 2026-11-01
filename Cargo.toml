@@ -1,0 +1,30 @@
+[package]
+name = "blobby-volley-3"
+version = "3.0.0"
+edition = "2021"
+authors = ["gratis01", "Blobby Volley Community"]
+description = "Blobby Volley 3 - Remastered in Rust with 2026 visual overhaul"
+
+[[bin]]
+name = "blobby"
+path = "rust/src/main.rs"
+
+[lib]
+name = "blobby_core"
+path = "rust/src/lib.rs"
+
+[[test]]
+name = "gameplay_tests"
+path = "rust/tests/gameplay_tests.rs"
+
+[dependencies]
+macroquad = { version = "0.4", features = ["audio"] }
+glam = "0.27"
+quad-rand = "0.2"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
