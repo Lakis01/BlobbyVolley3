@@ -325,7 +325,7 @@ async fn main() {
 
         set_camera(&Camera2D {
             target: cam_target,
-            zoom: Vec2::new(2.0 / cam_w, -2.0 / cam_h), // Inverted y for screen coords
+            zoom: Vec2::new(2.0 / cam_w, 2.0 / cam_h),
             ..Default::default()
         });
 
@@ -363,7 +363,7 @@ async fn main() {
         // Remap virtual coords to UI coordinates
         set_camera(&Camera2D {
             target: Vec2::new(VIRTUAL_WIDTH * 0.5, VIRTUAL_HEIGHT * 0.5),
-            zoom: Vec2::new(2.0 / cam_w, -2.0 / cam_h),
+            zoom: Vec2::new(2.0 / cam_w, 2.0 / cam_h),
             ..Default::default()
         });
 
@@ -416,3 +416,4 @@ async fn main() {
         next_frame().await;
     }
 }
+
