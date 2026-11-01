@@ -50,6 +50,7 @@ version = "3.0.0"
 dependencies = [
  "glam",
  "macroquad",
+ "opus-pure",
  "quad-rand",
  "serde",
  "serde_json",
@@ -325,6 +326,12 @@ checksum = "13e571c3517af9e1729d4c63571a27edd660ade0667973bfc74a67c660c2b651"
 dependencies = [
  "byteorder",
 ]
+
+[[package]]
+name = "opus-pure"
+version = "0.2.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4de7c2ad44427a636b27bf0b03eb29e713775ba1b45ff31a0618c19ee5adb215"
 
 [[package]]
 name = "png"

@@ -204,3 +204,28 @@ fn test_bot_vs_bot_rally_simulation() {
     println!("Score: Master (Left) {} - {} Pro (Right)", logic.scores[0], logic.scores[1]);
     assert!(total_blob_hits >= 25, "Master and Pro bots should produce competitive rallies (got {} hits)", total_blob_hits);
 }
+
+#[test]
+fn test_opus_sound_decoding() {
+    let bums_opus = include_bytes!("../assets/sounds/bums.opus");
+    let pfiff_opus = include_bytes!("../assets/sounds/pfiff.opus");
+    let chat_opus = include_bytes!("../assets/sounds/chat.opus");
+
+    let wav_bums = blobby_core::audio::decode_opus_to_wav(bums_opus)
+        .expect("bums.opus should decode cleanly to WAV");
+    assert!(wav_bums.len() > 44, "Decoded bums WAV must contain samples");
+    assert_eq!(&wav_bums[0..4], b"RIFF");
+    assert_eq!(&wav_bums[8..12], b"WAVE");
+
+    let wav_pfiff = blobby_core::audio::decode_opus_to_wav(pfiff_opus)
+        .expect("pfiff.opus should decode cleanly to WAV");
+    assert!(wav_pfiff.len() > 44, "Decoded pfiff WAV must contain samples");
+    assert_eq!(&wav_pfiff[0..4], b"RIFF");
+    assert_eq!(&wav_pfiff[8..12], b"WAVE");
+
+    let wav_chat = blobby_core::audio::decode_opus_to_wav(chat_opus)
+        .expect("chat.opus should decode cleanly to WAV");
+    assert!(wav_chat.len() > 44, "Decoded chat WAV must contain samples");
+    assert_eq!(&wav_chat[0..4], b"RIFF");
+    assert_eq!(&wav_chat[8..12], b"WAVE");
+}

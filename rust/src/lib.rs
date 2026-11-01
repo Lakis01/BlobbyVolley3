@@ -4,4 +4,5 @@ pub mod physics;
 pub mod rules;
 pub mod ai;
 pub mod net;
+pub mod audio;
 
