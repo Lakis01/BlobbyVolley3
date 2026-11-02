@@ -3,7 +3,7 @@ set -e
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 DIST_DIR="$REPO_ROOT/dist"
-VERSION="3.0.0"
+VERSION="${1:-$(grep -m1 '^version = ' "$REPO_ROOT/Cargo.toml" | cut -d '"' -f2)}"
 
 echo "Building Blobby Volley 3 Release Packages (v$VERSION)..."
 mkdir -p "$DIST_DIR"
