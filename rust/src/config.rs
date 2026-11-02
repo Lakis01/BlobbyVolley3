@@ -2,6 +2,7 @@
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::PathBuf;
+use crate::glicko::GlickoRating;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UserConfig {
@@ -17,6 +18,12 @@ pub struct UserConfig {
     pub right_theme_index: usize,
     #[serde(default)]
     pub matchmaking_registry_url: Option<String>,
+    #[serde(default)]
+    pub glicko: GlickoRating,
+    #[serde(default)]
+    pub matches_won: u32,
+    #[serde(default)]
+    pub matches_played: u32,
 }
 
 impl Default for UserConfig {
@@ -38,6 +45,9 @@ impl Default for UserConfig {
             left_theme_index: 0,
             right_theme_index: 1,
             matchmaking_registry_url: None,
+            glicko: GlickoRating::default(),
+            matches_won: 0,
+            matches_played: 0,
         }
     }
 }

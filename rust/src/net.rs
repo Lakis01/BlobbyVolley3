@@ -568,3 +568,269 @@ pub fn query_master_server() -> Vec<ServerEntry> {
 
     list
 }
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LanMatchmakingBeacon {
+    pub app: String,
+    pub player_id: String,
+    pub name: String,
+    pub rating: f64,
+    pub rd: f64,
+    pub port: u16,
+    pub arena_index: usize,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum MatchmakingStatus {
+    Searching { elapsed_sec: f32, current_tolerance: f64 },
+    MatchedAsHost { opponent_name: String, opponent_rating: f64, opponent_rd: f64 },
+    MatchedAsClient { target_addr: String, opponent_name: String, opponent_rating: f64, opponent_rd: f64 },
+}
+
+pub struct QuickMatchAgent {
+    pub player_id: String,
+    pub player_name: String,
+    pub rating: f64,
+    pub rd: f64,
+    pub arena_index: usize,
+    pub search_start_time: f32,
+    pub last_beacon_time: f32,
+    pub coordinator_url: Option<String>,
+    pub last_http_poll_time: f32,
+    socket: Option<UdpSocket>,
+}
+
+impl QuickMatchAgent {
+    pub fn new(
+        player_name: &str,
+        rating: f64,
+        rd: f64,
+        arena_index: usize,
+        coordinator_url: Option<String>,
+        start_time: f32,
+    ) -> Self {
+        let rand_id = quad_rand::rand();
+        let timestamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis() as u32;
+        let player_id = format!("bv_{:08x}_{:04x}", rand_id, (timestamp & 0xFFFF));
+
+        // Try binding discovery ports 1235..=1240
+        let mut bound_socket = None;
+        for p in 1235..=1240 {
+            if let Ok(s) = UdpSocket::bind(format!("0.0.0.0:{}", p)) {
+                let _ = s.set_broadcast(true);
+                let _ = s.set_nonblocking(true);
+                bound_socket = Some(s);
+                break;
+            }
+        }
+        if bound_socket.is_none() {
+            if let Ok(s) = UdpSocket::bind("0.0.0.0:0") {
+                let _ = s.set_broadcast(true);
+                let _ = s.set_nonblocking(true);
+                bound_socket = Some(s);
+            }
+        }
+
+        Self {
+            player_id,
+            player_name: player_name.to_string(),
+            rating,
+            rd,
+            arena_index,
+            search_start_time: start_time,
+            last_beacon_time: -10.0,
+            coordinator_url,
+            last_http_poll_time: -10.0,
+            socket: bound_socket,
+        }
+    }
+
+    pub fn poll(&mut self, current_time: f32) -> MatchmakingStatus {
+        let elapsed = (current_time - self.search_start_time).max(0.0) as f64;
+        // Matching tolerance window: starts at +/- 100 and widens by 25 points every 5 seconds in queue
+        let tolerance = 100.0 + (elapsed / 5.0).floor() * 25.0;
+
+        // 1. Broadcast LAN matchmaking beacon every 0.6 seconds
+        if current_time - self.last_beacon_time >= 0.6 {
+            self.last_beacon_time = current_time;
+            if let Some(ref sock) = self.socket {
+                let beacon = LanMatchmakingBeacon {
+                    app: "blobby_volley_3_mm".to_string(),
+                    player_id: self.player_id.clone(),
+                    name: self.player_name.clone(),
+                    rating: self.rating,
+                    rd: self.rd,
+                    port: DEFAULT_PORT,
+                    arena_index: self.arena_index,
+                };
+                if let Ok(payload) = serde_json::to_vec(&beacon) {
+                    let _ = sock.send_to(&payload, format!("255.255.255.255:{}", LAN_DISCOVERY_PORT));
+                    for p in 1235..=1240 {
+                        let _ = sock.send_to(&payload, format!("127.0.0.1:{}", p));
+                    }
+                }
+            }
+        }
+
+        // 2. Poll incoming UDP packets
+        if let Some(ref sock) = self.socket {
+            let mut buf = [0u8; 1024];
+            while let Ok((len, src_addr)) = sock.recv_from(&mut buf) {
+                if let Ok(beacon) = serde_json::from_slice::<LanMatchmakingBeacon>(&buf[..len]) {
+                    if beacon.app == "blobby_volley_3_mm" && beacon.player_id != self.player_id {
+                        let diff = (self.rating - beacon.rating).abs();
+                        if diff <= tolerance {
+                            // Valid skill match found! Deterministic tie-breaker assigns Host vs Client
+                            if self.player_id < beacon.player_id {
+                                return MatchmakingStatus::MatchedAsHost {
+                                    opponent_name: beacon.name,
+                                    opponent_rating: beacon.rating,
+                                    opponent_rd: beacon.rd,
+                                };
+                            } else {
+                                let target_ip = src_addr.ip().to_string();
+                                let target_addr = format!("{}:{}", target_ip, beacon.port);
+                                return MatchmakingStatus::MatchedAsClient {
+                                    target_addr,
+                                    opponent_name: beacon.name,
+                                    opponent_rating: beacon.rating,
+                                    opponent_rd: beacon.rd,
+                                };
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // 3. Poll HTTP serverless coordinator if configured
+        if let Some(ref url) = self.coordinator_url {
+            if current_time - self.last_http_poll_time >= 2.0 {
+                self.last_http_poll_time = current_time;
+                if let Some(res) = poll_http_coordinator(url, &self.player_id, &self.player_name, self.rating, self.rd) {
+                    return res;
+                }
+            }
+        }
+
+        MatchmakingStatus::Searching {
+            elapsed_sec: elapsed as f32,
+            current_tolerance: tolerance,
+        }
+    }
+
+    pub fn cancel(&self) {
+        if let Some(ref url) = self.coordinator_url {
+            cancel_http_coordinator(url, &self.player_id);
+        }
+    }
+}
+
+struct SimpleUrl {
+    host: String,
+    port: u16,
+    _path: String,
+}
+
+fn parse_simple_url(raw: &str) -> Option<SimpleUrl> {
+    let stripped = if let Some(s) = raw.strip_prefix("http://") {
+        s
+    } else {
+        raw
+    };
+    let (host_port, path) = if let Some(slash_idx) = stripped.find('/') {
+        (&stripped[..slash_idx], &stripped[slash_idx..])
+    } else {
+        (stripped, "/")
+    };
+    let (host, port) = if let Some(colon_idx) = host_port.find(':') {
+        let h = &host_port[..colon_idx];
+        let p = host_port[colon_idx + 1..].parse::<u16>().unwrap_or(80);
+        (h.to_string(), p)
+    } else {
+        (host_port.to_string(), 80)
+    };
+    Some(SimpleUrl { host, port, _path: path.to_string() })
+}
+
+fn poll_http_coordinator(
+    base_url: &str,
+    player_id: &str,
+    name: &str,
+    rating: f64,
+    rd: f64,
+) -> Option<MatchmakingStatus> {
+    let simple = parse_simple_url(base_url)?;
+    let addr = format!("{}:{}", simple.host, simple.port);
+    let mut stream = TcpStream::connect_timeout(
+        &addr.to_socket_addrs().ok()?.next()?,
+        Duration::from_millis(400),
+    ).ok()?;
+    let _ = stream.set_read_timeout(Some(Duration::from_millis(400)));
+    let _ = stream.set_write_timeout(Some(Duration::from_millis(400)));
+
+    let body = format!(
+        r#"{{"player_id":"{}","name":"{}","rating":{},"rd":{}}}"#,
+        player_id, name, rating, rd
+    );
+    let req = format!(
+        "POST /matchmaking/queue HTTP/1.1\r\nHost: {}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+        simple.host,
+        body.len(),
+        body
+    );
+    stream.write_all(req.as_bytes()).ok()?;
+    let mut resp = String::new();
+    stream.read_to_string(&mut resp).ok()?;
+
+    if let Some(json_start) = resp.find("\r\n\r\n") {
+        let json_body = &resp[json_start + 4..];
+        if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(json_body) {
+            if parsed.get("status").and_then(|v| v.as_str()) == Some("matched") {
+                if let Some(m) = parsed.get("match") {
+                    let role = m.get("role").and_then(|v| v.as_str()).unwrap_or("client");
+                    let opp_name = m.get("opponent_name").and_then(|v| v.as_str()).unwrap_or("Opponent").to_string();
+                    let opp_r = m.get("opponent_rating").and_then(|v| v.as_f64()).unwrap_or(1500.0);
+                    let opp_rd = m.get("opponent_rd").and_then(|v| v.as_f64()).unwrap_or(350.0);
+                    let connect_to = m.get("connect_to").and_then(|v| v.as_str()).unwrap_or("127.0.0.1:1234").to_string();
+
+                    if role == "host" {
+                        return Some(MatchmakingStatus::MatchedAsHost {
+                            opponent_name: opp_name,
+                            opponent_rating: opp_r,
+                            opponent_rd: opp_rd,
+                        });
+                    } else {
+                        return Some(MatchmakingStatus::MatchedAsClient {
+                            target_addr: connect_to,
+                            opponent_name: opp_name,
+                            opponent_rating: opp_r,
+                            opponent_rd: opp_rd,
+                        });
+                    }
+                }
+            }
+        }
+    }
+    None
+}
+
+fn cancel_http_coordinator(base_url: &str, player_id: &str) {
+    if let Some(simple) = parse_simple_url(base_url) {
+        let addr = format!("{}:{}", simple.host, simple.port);
+        if let Ok(mut addrs) = addr.to_socket_addrs() {
+            if let Some(sa) = addrs.next() {
+                if let Ok(mut stream) = TcpStream::connect_timeout(&sa, Duration::from_millis(300)) {
+                    let req = format!(
+                        "DELETE /matchmaking/cancel?player_id={} HTTP/1.1\r\nHost: {}\r\nConnection: close\r\n\r\n",
+                        player_id, simple.host
+                    );
+                    let _ = stream.write_all(req.as_bytes());
+                }
+            }
+        }
+    }
+}

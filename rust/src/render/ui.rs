@@ -11,6 +11,7 @@ use crate::net::ServerEntry;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum GameMode {
     SinglePlayer,
+    QuickMatch,
     TwoPlayerLocal,
     BotVsBot,
     HostOnline,
@@ -22,6 +23,7 @@ impl GameMode {
     pub fn name(self) -> &'static str {
         match self {
             GameMode::SinglePlayer => "1P vs CPU",
+            GameMode::QuickMatch => "Quick Match (Glicko-2 Ranked)",
             GameMode::TwoPlayerLocal => "2 Players (Local)",
             GameMode::BotVsBot => "CPU vs CPU",
             GameMode::HostOnline => "Host Online Match",
@@ -32,7 +34,8 @@ impl GameMode {
 
     pub fn next(self) -> Self {
         match self {
-            GameMode::SinglePlayer => GameMode::TwoPlayerLocal,
+            GameMode::SinglePlayer => GameMode::QuickMatch,
+            GameMode::QuickMatch => GameMode::TwoPlayerLocal,
             GameMode::TwoPlayerLocal => GameMode::BotVsBot,
             GameMode::BotVsBot => GameMode::HostOnline,
             GameMode::HostOnline => GameMode::JoinOnline,
@@ -44,7 +47,8 @@ impl GameMode {
     pub fn prev(self) -> Self {
         match self {
             GameMode::SinglePlayer => GameMode::ServerBrowser,
-            GameMode::TwoPlayerLocal => GameMode::SinglePlayer,
+            GameMode::QuickMatch => GameMode::SinglePlayer,
+            GameMode::TwoPlayerLocal => GameMode::QuickMatch,
             GameMode::BotVsBot => GameMode::TwoPlayerLocal,
             GameMode::HostOnline => GameMode::BotVsBot,
             GameMode::JoinOnline => GameMode::HostOnline,
@@ -690,11 +694,119 @@ pub fn render_pause_menu(selected_item: usize) {
     }
 }
 
-pub fn render_victory_screen(_winner: PlayerSide, winner_name: &str, logic: &GameLogic, time: f32) {
+pub fn render_matchmaking_queue(
+    player_name: &str,
+    my_rating: f64,
+    tolerance: f64,
+    elapsed_sec: f32,
+    rank_title: &str,
+    time: f32,
+) {
+    // Backdrop dimming
+    draw_rectangle(0.0, 0.0, VIRTUAL_WIDTH, VIRTUAL_HEIGHT, Color::new(0.04, 0.05, 0.1, 0.88));
+
+    let card_w = 600.0;
+    let card_h = 420.0;
+    let card_x = (VIRTUAL_WIDTH - card_w) * 0.5;
+    let card_y = (VIRTUAL_HEIGHT - card_h) * 0.5;
+
+    // Glassmorphism card
+    draw_rectangle(card_x, card_y, card_w, card_h, Color::new(0.08, 0.1, 0.18, 0.95));
+    draw_rectangle_lines(card_x, card_y, card_w, card_h, 2.0, Color::new(0.2, 0.85, 1.0, 0.8));
+
+    // Top glow line
+    draw_line(
+        card_x + 10.0,
+        card_y + 1.0,
+        card_x + card_w - 10.0,
+        card_y + 1.0,
+        2.0,
+        Color::new(0.3, 0.9, 1.0, 0.9),
+    );
+
+    // Title & Subtitle
+    let title = "RANKED QUICK MATCH";
+    let title_dim = measure_text(title, None, 30, 1.0);
+    draw_text(title, (VIRTUAL_WIDTH - title_dim.width) * 0.5, card_y + 44.0, 30.0, Color::new(0.3, 0.9, 1.0, 1.0));
+
+    let sub = "Automated Glicko-2 Skill-Based Matchmaking";
+    let sub_dim = measure_text(sub, None, 14, 1.0);
+    draw_text(sub, (VIRTUAL_WIDTH - sub_dim.width) * 0.5, card_y + 68.0, 14.0, Color::new(1.0, 0.85, 0.35, 0.9));
+
+    // Animated Radar Scanner Circle
+    let radar_center_x = VIRTUAL_WIDTH * 0.5;
+    let radar_center_y = card_y + 155.0;
+    let radar_radius = 50.0;
+
+    // Concentric radar rings
+    draw_circle_lines(radar_center_x, radar_center_y, radar_radius, 1.5, Color::new(0.2, 0.6, 0.9, 0.4));
+    draw_circle_lines(radar_center_x, radar_center_y, radar_radius * 0.65, 1.0, Color::new(0.2, 0.6, 0.9, 0.3));
+    draw_circle_lines(radar_center_x, radar_center_y, radar_radius * 0.3, 1.0, Color::new(0.2, 0.6, 0.9, 0.25));
+
+    // Expanding pulse waves
+    let wave1 = (time * 1.5).fract();
+    let wave2 = ((time * 1.5) + 0.5).fract();
+    draw_circle_lines(radar_center_x, radar_center_y, radar_radius * wave1, 1.5, Color::new(0.3, 0.9, 1.0, (1.0 - wave1) * 0.8));
+    draw_circle_lines(radar_center_x, radar_center_y, radar_radius * wave2, 1.5, Color::new(0.3, 0.9, 1.0, (1.0 - wave2) * 0.8));
+
+    // Rotating scanner beam
+    let angle = time * 3.5;
+    let sweep_x = radar_center_x + angle.cos() * radar_radius;
+    let sweep_y = radar_center_y + angle.sin() * radar_radius;
+    draw_line(radar_center_x, radar_center_y, sweep_x, sweep_y, 2.0, Color::new(0.4, 1.0, 0.7, 0.9));
+    draw_circle(radar_center_x, radar_center_y, 4.0, Color::new(0.4, 1.0, 0.7, 1.0));
+
+    // Details Box
+    let box_y = card_y + 225.0;
+    let box_w = card_w - 60.0;
+    let box_x = card_x + 30.0;
+    draw_rectangle(box_x, box_y, box_w, 120.0, Color::new(0.05, 0.08, 0.15, 0.85));
+    draw_rectangle_lines(box_x, box_y, box_w, 120.0, 1.0, Color::new(0.3, 0.5, 0.75, 0.5));
+
+    let mins = (elapsed_sec / 60.0).floor() as u32;
+    let secs = (elapsed_sec % 60.0).floor() as u32;
+
+    let line1_label = "Player Profile:";
+    let line1_val = format!("{} (Rating: {:.0} - {})", player_name, my_rating, rank_title);
+    let line2_label = "Search Range:";
+    let line2_val = format!("{:.0} - {:.0} (±{:.0} Rating)", (my_rating - tolerance).max(400.0), my_rating + tolerance, tolerance);
+    let line3_label = "Status:";
+    let line3_val = format!("Searching LAN & Online... ({:02}:{:02})", mins, secs);
+
+    let draw_row = |lbl: &str, val: &str, y: f32| {
+        draw_text(lbl, box_x + 20.0, y, 16.0, Color::new(0.7, 0.8, 0.9, 0.9));
+        draw_text(val, box_x + 160.0, y, 16.0, Color::new(1.0, 0.95, 0.4, 1.0));
+    };
+
+    draw_row(line1_label, &line1_val, box_y + 32.0);
+    draw_row(line2_label, &line2_val, box_y + 66.0);
+    draw_row(line3_label, &line3_val, box_y + 100.0);
+
+    // Cancel prompt
+    let cancel_prompt = "Press [ ESC ] to Cancel Search and Return to Main Menu";
+    let c_dim = measure_text(cancel_prompt, None, 15, 1.0);
+    let pulse_c = (time * 4.0).sin().abs() * 0.2 + 0.8;
+    draw_text(
+        cancel_prompt,
+        (VIRTUAL_WIDTH - c_dim.width) * 0.5,
+        card_y + card_h - 22.0,
+        15.0,
+        Color::new(0.95, 0.4, 0.4, pulse_c),
+    );
+}
+
+pub fn render_victory_screen(
+    _winner: PlayerSide,
+    winner_name: &str,
+    logic: &GameLogic,
+    rating_update: Option<(f64, f64, &'static str)>,
+    time: f32,
+) {
     draw_rectangle(0.0, 0.0, VIRTUAL_WIDTH, VIRTUAL_HEIGHT, Color::new(0.0, 0.0, 0.0, 0.65));
 
-    let card_w = 520.0;
-    let card_h = 330.0;
+    let has_rating = rating_update.is_some();
+    let card_w = 540.0;
+    let card_h = if has_rating { 390.0 } else { 330.0 };
     let card_x = (VIRTUAL_WIDTH - card_w) * 0.5;
     let card_y = (VIRTUAL_HEIGHT - card_h) * 0.5;
 
@@ -704,24 +816,48 @@ pub fn render_victory_screen(_winner: PlayerSide, winner_name: &str, logic: &Gam
     let winner_text = format!("{} WINS!", winner_name.to_uppercase());
 
     let pulse = (time * 4.0).sin().abs() * 0.15 + 0.85;
-    let title_dim = measure_text(&winner_text, None, 40, 1.0);
+    let title_dim = measure_text(&winner_text, None, 38, 1.0);
     draw_text(
         &winner_text,
         (VIRTUAL_WIDTH - title_dim.width) * 0.5,
-        card_y + 58.0,
-        40.0,
+        card_y + 52.0,
+        38.0,
         Color::new(1.0, 0.9 * pulse, 0.2, 1.0),
     );
 
     let score_str = format!("FINAL SCORE: {} - {}", logic.scores[0], logic.scores[1]);
-    let score_dim = measure_text(&score_str, None, 26, 1.0);
+    let score_dim = measure_text(&score_str, None, 25, 1.0);
     draw_text(
         &score_str,
         (VIRTUAL_WIDTH - score_dim.width) * 0.5,
-        card_y + 105.0,
-        26.0,
+        card_y + 94.0,
+        25.0,
         WHITE,
     );
+
+    let mut start_y = card_y + 140.0;
+
+    // Rating update banner if applicable
+    if let Some((old_r, new_r, rank)) = rating_update {
+        let delta = new_r - old_r;
+        let sign = if delta >= 0.0 { "+" } else { "" };
+        let col = if delta >= 0.0 {
+            Color::new(0.3, 1.0, 0.45, 1.0)
+        } else {
+            Color::new(1.0, 0.4, 0.4, 1.0)
+        };
+
+        let banner_w = card_w - 60.0;
+        let banner_x = card_x + 30.0;
+        draw_rectangle(banner_x, start_y - 22.0, banner_w, 36.0, Color::new(0.06, 0.12, 0.22, 0.9));
+        draw_rectangle_lines(banner_x, start_y - 22.0, banner_w, 36.0, 1.0, Color::new(0.3, 0.7, 1.0, 0.6));
+
+        let r_text = format!("GLICKO-2: {:.0} -> {:.0} ({}{:.0}) - {}", old_r, new_r, sign, delta, rank);
+        let r_dim = measure_text(&r_text, None, 17, 1.0);
+        draw_text(&r_text, (VIRTUAL_WIDTH - r_dim.width) * 0.5, start_y + 2.0, 17.0, col);
+
+        start_y += 50.0;
+    }
 
     // Stats breakdown
     let mins = (logic.stats.match_time_seconds / 60.0).floor() as u32;
@@ -730,17 +866,16 @@ pub fn render_victory_screen(_winner: PlayerSide, winner_name: &str, logic: &Gam
     let stat2 = format!("Total Rallies:     {}", logic.stats.total_rallies);
     let stat3 = format!("Longest Rally:     {} hits", logic.stats.max_rally_hits);
 
-    let start_y = card_y + 155.0;
     draw_text(&stat1, card_x + 60.0, start_y, 18.0, Color::new(0.8, 0.85, 0.95, 0.9));
-    draw_text(&stat2, card_x + 60.0, start_y + 30.0, 18.0, Color::new(0.8, 0.85, 0.95, 0.9));
-    draw_text(&stat3, card_x + 60.0, start_y + 60.0, 18.0, Color::new(0.8, 0.85, 0.95, 0.9));
+    draw_text(&stat2, card_x + 60.0, start_y + 28.0, 18.0, Color::new(0.8, 0.85, 0.95, 0.9));
+    draw_text(&stat3, card_x + 60.0, start_y + 56.0, 18.0, Color::new(0.8, 0.85, 0.95, 0.9));
 
     let prompt = "Press Space or Enter to Continue";
     let prompt_dim = measure_text(prompt, None, 18, 1.0);
     draw_text(
         prompt,
         (VIRTUAL_WIDTH - prompt_dim.width) * 0.5,
-        card_y + card_h - 24.0,
+        card_y + card_h - 22.0,
         18.0,
         Color::new(0.2, 0.9, 1.0, pulse),
     );

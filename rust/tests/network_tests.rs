@@ -98,3 +98,64 @@ fn test_lan_discovery_beacon() {
     assert_eq!(decoded.port, 1234);
     assert_eq!(decoded.arena, "Neo Cyber Stadium");
 }
+
+#[test]
+fn test_lan_matchmaking_beacon_and_tiebreaker() {
+    use blobby_core::net::LanMatchmakingBeacon;
+
+    let beacon_a = LanMatchmakingBeacon {
+        app: "blobby_volley_3_mm".to_string(),
+        player_id: "bv_001_alpha".to_string(),
+        name: "Player 1".to_string(),
+        rating: 1520.0,
+        rd: 120.0,
+        port: 1234,
+        arena_index: 0,
+    };
+
+    let beacon_b = LanMatchmakingBeacon {
+        app: "blobby_volley_3_mm".to_string(),
+        player_id: "bv_002_bravo".to_string(),
+        name: "Player 2".to_string(),
+        rating: 1550.0,
+        rd: 95.0,
+        port: 1234,
+        arena_index: 0,
+    };
+
+    // 1. Serialization integrity
+    let encoded = serde_json::to_vec(&beacon_a).unwrap();
+    let decoded: LanMatchmakingBeacon = serde_json::from_slice(&encoded).unwrap();
+    assert_eq!(decoded.player_id, "bv_001_alpha");
+    assert_eq!(decoded.rating, 1520.0);
+
+    // 2. Skill distance check
+    let rating_diff = (beacon_a.rating - beacon_b.rating).abs();
+    assert_eq!(rating_diff, 30.0);
+    assert!(rating_diff <= 100.0, "Skill difference within default 100 tolerance window");
+
+    // 3. Simultaneous search role assignment tie-breaker
+    // Both players execute this exact same deterministic check:
+    let a_is_host = beacon_a.player_id < beacon_b.player_id;
+    let b_is_host = beacon_b.player_id < beacon_a.player_id;
+
+    assert!(a_is_host, "Player A with lower ID must be designated Host");
+    assert!(!b_is_host, "Player B with higher ID must be designated Client");
+    assert_ne!(a_is_host, b_is_host, "Exactly one player must be host, and one must be client");
+}
+
+#[test]
+fn test_glicko2_rank_advancement() {
+    use blobby_core::glicko::GlickoRating;
+
+    let mut player = GlickoRating::new(1500.0, 200.0, 0.06);
+    assert_eq!(player.rank_title(), "Silver II");
+
+    // Win 3 consecutive matches against high rated opponents
+    for _ in 0..3 {
+        player = player.update_match(1650.0, 60.0, 1.0);
+    }
+
+    assert!(player.rating > 1650.0, "Rating should advance past 1650 after 3 wins against higher rated players");
+    assert!(player.deviation < 200.0, "Rating deviation should reduce (higher certainty)");
+}

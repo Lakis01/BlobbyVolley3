@@ -12,6 +12,7 @@ mod input;
 mod net;
 mod render;
 mod config;
+mod glicko;
 
 use constants::*;
 use physics::{PhysicWorld, MatchEvent, PlayerSide};
@@ -19,13 +20,14 @@ use rules::{GameLogic, RuleMode};
 use ai::{BotController, AiDifficulty};
 use audio::AudioManager;
 use vfx::VfxManager;
-use net::{NetworkHost, NetworkClient, NetEvent, ServerEntry, query_master_server, get_local_ip, DEFAULT_PORT};
+use net::{NetworkHost, NetworkClient, NetEvent, ServerEntry, query_master_server, get_local_ip, DEFAULT_PORT, QuickMatchAgent, MatchmakingStatus};
 use render::blob::{render_blobby, BlobTheme};
 use render::ball::{render_ball, BallTrail};
 use render::net::NetRenderer;
 use render::arenas::{render_arena, ArenaType};
 use render::ui::*;
 use config::UserConfig;
+use glicko::GlickoRating;
 
 #[derive(Debug, Clone, PartialEq)]
 enum AppState {
@@ -34,6 +36,7 @@ enum AppState {
     HostLobby,
     JoinScreen,
     ServerBrowser { selected_idx: usize, servers: Vec<ServerEntry>, is_refreshing: bool },
+    MatchmakingQueue,
     Playing,
     Paused,
     Victory(PlayerSide),
@@ -90,9 +93,12 @@ async fn main() {
     let mut bot_left = BotController::new(PlayerSide::Left, difficulty);
     let mut bot_right = BotController::new(PlayerSide::Right, difficulty);
 
-    // Online Networking State
+    // Online Networking & Matchmaking State
     let mut net_host: Option<NetworkHost> = None;
     let mut net_client: Option<NetworkClient> = None;
+    let mut quick_match_agent: Option<QuickMatchAgent> = None;
+    let mut active_match_opponent: Option<(String, f64, f64)> = None; // (name, rating, rd)
+    let mut last_rating_update: Option<(f64, f64, &'static str)> = None; // (old_r, new_r, rank_title)
     let mut join_ip_input = format!("127.0.0.1:{}", DEFAULT_PORT);
     let local_ip = get_local_ip();
 
@@ -308,7 +314,35 @@ async fn main() {
                     );
 
                     match game_mode {
+                        GameMode::QuickMatch => {
+                            quick_match_agent = Some(QuickMatchAgent::new(
+                                &player1_name,
+                                config.glicko.rating,
+                                config.glicko.deviation,
+                                arena.to_index(),
+                                config.matchmaking_registry_url.clone(),
+                                global_time,
+                            ));
+                            state = AppState::MatchmakingQueue;
+                            audio.play_ball_hit(0.3);
+                        }
+                        GameMode::SinglePlayer => {
+                            let (cpu_r, cpu_rd) = GlickoRating::ai_baseline(difficulty);
+                            active_match_opponent = Some((format!("CPU ({})", difficulty.name()), cpu_r, cpu_rd));
+                            logic = GameLogic::new(rule_mode, score_to_win);
+                            physics = PhysicWorld::new();
+                            physics.reset_players();
+                            physics.reset_ball(Some(PlayerSide::Left));
+                            logic.on_serve();
+                            bot_left = BotController::new(PlayerSide::Left, difficulty);
+                            bot_right = BotController::new(PlayerSide::Right, difficulty);
+                            bot_left.reset_rally();
+                            bot_right.reset_rally();
+                            state = AppState::Playing;
+                            audio.play_whistle();
+                        }
                         GameMode::TwoPlayerLocal => {
+                            active_match_opponent = None;
                             // Prompt player 2 name on starting 2-player mode
                             state = AppState::PlayerSetup {
                                 is_two_player: true,
@@ -317,15 +351,18 @@ async fn main() {
                             audio.play_ball_hit(0.3);
                         }
                         GameMode::HostOnline => {
+                            active_match_opponent = None;
                             if let Ok(host) = NetworkHost::bind(DEFAULT_PORT, &player1_name, arena.name()) {
                                 net_host = Some(host);
                                 state = AppState::HostLobby;
                             }
                         }
                         GameMode::JoinOnline => {
+                            active_match_opponent = None;
                             state = AppState::JoinScreen;
                         }
                         GameMode::ServerBrowser => {
+                            active_match_opponent = None;
                             let servers = query_master_server();
                             state = AppState::ServerBrowser {
                                 selected_idx: 0,
@@ -333,8 +370,8 @@ async fn main() {
                                 is_refreshing: false,
                             };
                         }
-                        _ => {
-                            // SinglePlayer or BotVsBot: start immediately!
+                        GameMode::BotVsBot => {
+                            active_match_opponent = None;
                             logic = GameLogic::new(rule_mode, score_to_win);
                             physics = PhysicWorld::new();
                             physics.reset_players();
@@ -446,6 +483,41 @@ async fn main() {
 
                 if is_key_pressed(KeyCode::Escape) {
                     state = AppState::MainMenu;
+                }
+            }
+
+            AppState::MatchmakingQueue => {
+                if is_key_pressed(KeyCode::Escape) {
+                    if let Some(ref agent) = quick_match_agent {
+                        agent.cancel();
+                    }
+                    quick_match_agent = None;
+                    state = AppState::MainMenu;
+                } else if let Some(ref mut agent) = quick_match_agent {
+                    match agent.poll(global_time) {
+                        MatchmakingStatus::Searching { .. } => {}
+                        MatchmakingStatus::MatchedAsHost { opponent_name, opponent_rating, opponent_rd } => {
+                            audio.play_score();
+                            if let Ok(host) = NetworkHost::bind(DEFAULT_PORT, &player1_name, arena.name()) {
+                                net_host = Some(host);
+                                active_match_opponent = Some((opponent_name, opponent_rating, opponent_rd));
+                                quick_match_agent = None;
+                                state = AppState::HostLobby;
+                            } else {
+                                quick_match_agent = None;
+                                state = AppState::MainMenu;
+                            }
+                        }
+                        MatchmakingStatus::MatchedAsClient { target_addr, opponent_name, opponent_rating, opponent_rd } => {
+                            audio.play_score();
+                            let mut client = NetworkClient::new();
+                            client.connect(&target_addr);
+                            net_client = Some(client);
+                            active_match_opponent = Some((opponent_name, opponent_rating, opponent_rd));
+                            quick_match_agent = None;
+                            state = AppState::JoinScreen;
+                        }
+                    }
                 }
             }
 
@@ -600,6 +672,26 @@ async fn main() {
                         audio.play_score();
                     }
 
+                    if let Some(winner) = logic.check_win() {
+                        if let Some((_, opp_r, opp_rd)) = active_match_opponent {
+                            let score = if winner == PlayerSide::Right { 1.0 } else { 0.0 };
+                            let old_r = config.glicko.rating;
+                            let new_rating = config.glicko.update_match(opp_r, opp_rd, score);
+                            config.matches_played += 1;
+                            if score == 1.0 {
+                                config.matches_won += 1;
+                            }
+                            config.glicko = new_rating;
+                            config.save();
+                            last_rating_update = Some((old_r, new_rating.rating, new_rating.rank_title()));
+                        } else {
+                            last_rating_update = None;
+                        }
+                        state = AppState::Victory(winner);
+                        vfx.spawn_confetti_celebration(Vec2::new(400.0, 200.0), 90);
+                        audio.play_score();
+                    }
+
                     if !client.is_connected {
                         state = AppState::MainMenu;
                     }
@@ -687,6 +779,21 @@ async fn main() {
 
                         if logic.can_start_round(&physics) {
                             if let Some(winner) = logic.winning_player {
+                                if let Some((_, opp_r, opp_rd)) = active_match_opponent {
+                                    let score = if winner == PlayerSide::Left { 1.0 } else { 0.0 };
+                                    let old_r = config.glicko.rating;
+                                    let new_rating = config.glicko.update_match(opp_r, opp_rd, score);
+                                    config.matches_played += 1;
+                                    if score == 1.0 {
+                                        config.matches_won += 1;
+                                    }
+                                    config.glicko = new_rating;
+                                    config.save();
+                                    last_rating_update = Some((old_r, new_rating.rating, new_rating.rank_title()));
+                                } else {
+                                    last_rating_update = None;
+                                }
+
                                 state = AppState::Victory(winner);
                                 vfx.spawn_confetti_celebration(Vec2::new(400.0, 200.0), 90);
                                 audio.play_score();
@@ -822,6 +929,23 @@ async fn main() {
             AppState::ServerBrowser { selected_idx, ref servers, is_refreshing } => {
                 render_server_browser(servers, selected_idx, is_refreshing, global_time);
             }
+            AppState::MatchmakingQueue => {
+                let (rating, tol, elapsed) = if let Some(ref agent) = quick_match_agent {
+                    let el = (global_time - agent.search_start_time).max(0.0);
+                    let tol = 100.0 + (el / 5.0).floor() as f64 * 25.0;
+                    (agent.rating, tol, el)
+                } else {
+                    (config.glicko.rating, 100.0, 0.0)
+                };
+                render_matchmaking_queue(
+                    &player1_name,
+                    rating,
+                    tol,
+                    elapsed,
+                    config.glicko.rank_title(),
+                    global_time,
+                );
+            }
             AppState::HostLobby => {
                 let is_connected = net_host.as_ref().map_or(false, |h| h.is_client_connected);
                 let room_name = net_host.as_ref().map_or("Match", |h| &h.room_name);
@@ -836,25 +960,33 @@ async fn main() {
             }
             AppState::Playing => {
                 let left_title = if net_host.is_some() {
-                    format!("{} (Host)", player1_name)
+                    format!("{} [{:.0}] (Host)", player1_name, config.glicko.rating)
                 } else if net_client.is_some() {
-                    "Host (P1)".to_string()
+                    if let Some((ref opp_name, opp_r, _)) = active_match_opponent {
+                        format!("{} [{:.0}]", opp_name, opp_r)
+                    } else {
+                        "Host (P1)".to_string()
+                    }
                 } else {
                     match game_mode {
-                        GameMode::BotVsBot => "CPU 1".to_string(),
-                        _ => player1_name.clone(),
+                        GameMode::BotVsBot => format!("CPU 1 [{:.0}]", GlickoRating::ai_baseline(difficulty).0),
+                        _ => format!("{} [{:.0}]", player1_name, config.glicko.rating),
                     }
                 };
 
                 let right_title = if net_host.is_some() {
-                    "Client (P2)".to_string()
+                    if let Some((ref opp_name, opp_r, _)) = active_match_opponent {
+                        format!("{} [{:.0}]", opp_name, opp_r)
+                    } else {
+                        "Client (P2)".to_string()
+                    }
                 } else if net_client.is_some() {
-                    format!("{} (You)", player1_name)
+                    format!("{} [{:.0}] (You)", player1_name, config.glicko.rating)
                 } else {
                     match game_mode {
-                        GameMode::SinglePlayer => format!("CPU ({})", difficulty.name()),
+                        GameMode::SinglePlayer => format!("CPU ({}) [{:.0}]", difficulty.name(), GlickoRating::ai_baseline(difficulty).0),
                         GameMode::TwoPlayerLocal => player2_name.clone(),
-                        GameMode::BotVsBot => format!("CPU 2 ({})", difficulty.name()),
+                        GameMode::BotVsBot => format!("CPU 2 ({}) [{:.0}]", difficulty.name(), GlickoRating::ai_baseline(difficulty).0),
                         _ => player2_name.clone(),
                     }
                 };
@@ -881,16 +1013,26 @@ async fn main() {
             }
             AppState::Victory(winner) => {
                 let winner_name = match winner {
-                    PlayerSide::Left => &player1_name,
+                    PlayerSide::Left => {
+                        if net_client.is_some() {
+                            active_match_opponent.as_ref().map(|(n, _, _)| n.as_str()).unwrap_or("Host")
+                        } else {
+                            &player1_name
+                        }
+                    }
                     PlayerSide::Right => {
-                        if game_mode == GameMode::SinglePlayer {
+                        if net_client.is_some() {
+                            &player1_name
+                        } else if let Some((ref opp_name, _, _)) = active_match_opponent {
+                            opp_name.as_str()
+                        } else if game_mode == GameMode::SinglePlayer {
                             "Computer"
                         } else {
                             &player2_name
                         }
                     }
                 };
-                render_victory_screen(winner, winner_name, &logic, global_time);
+                render_victory_screen(winner, winner_name, &logic, last_rating_update, global_time);
             }
         }
 

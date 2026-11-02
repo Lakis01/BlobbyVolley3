@@ -46,3 +46,4 @@ You can then set this URL in `~/.config/blobbyvolley3/config.json`:
 }
 ```
 Or leave it blank to rely on auto-discovered local LAN rooms and direct IP connections!
+
