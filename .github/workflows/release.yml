@@ -5,6 +5,9 @@ on:
     types: [published]
   workflow_dispatch:
 
+permissions:
+  contents: write
+
 jobs:
   build-linux:
     name: Build Linux Packages
@@ -28,11 +31,15 @@ jobs:
         run: ./packaging/build_packages.sh
 
       - name: Upload Linux Release Assets
-        if: github.event_name == 'release'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.event.release.tag_name || 'v3.0.0' }}
+          files: |
+            dist/*.tar.gz
+            dist/*.deb
+            dist/PKGBUILD
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          gh release upload ${{ github.event.release.tag_name }} dist/* --clobber
 
   build-windows:
     name: Build Windows Portable Bundle
@@ -57,11 +64,12 @@ jobs:
           Compress-Archive -Path "dist-win/blobby-volley-3-windows-x64/*" -DestinationPath "dist-win/blobby-volley-3-v3.0.0-windows-x64.zip"
 
       - name: Upload Windows Release Asset
-        if: github.event_name == 'release'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.event.release.tag_name || 'v3.0.0' }}
+          files: dist-win/blobby-volley-3-v3.0.0-windows-x64.zip
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          gh release upload ${{ github.event.release.tag_name }} dist-win/blobby-volley-3-v3.0.0-windows-x64.zip --clobber
 
   build-macos:
     name: Build macOS Universal Bundle
@@ -88,8 +96,9 @@ jobs:
           tar -czf dist-mac/blobby-volley-3-v3.0.0-macos-universal.tar.gz -C dist-mac blobby
 
       - name: Upload macOS Release Asset
-        if: github.event_name == 'release'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.event.release.tag_name || 'v3.0.0' }}
+          files: dist-mac/blobby-volley-3-v3.0.0-macos-universal.tar.gz
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          gh release upload ${{ github.event.release.tag_name }} dist-mac/blobby-volley-3-v3.0.0-macos-universal.tar.gz --clobber
