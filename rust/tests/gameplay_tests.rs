@@ -666,5 +666,48 @@ fn test_strictly_monotonous_ai_progression() {
     }
 }
 
+#[test]
+fn test_country_typeahead_search_and_ascii_rendering() {
+    use blobby_core::config::{
+        find_country_by_search, country_badge, country_code_at, AVAILABLE_COUNTRIES,
+    };
+
+    // 1. All countries in roster must be pure ASCII to prevent missing glyphs
+    for &(code, name) in AVAILABLE_COUNTRIES {
+        assert!(code.is_ascii(), "Code '{}' must be ASCII", code);
+        assert!(name.is_ascii(), "Name '{}' must be ASCII", name);
+    }
+
+    // 2. Test slow single-key jumps (G -> Gabon, E -> Ecuador, R -> Romania)
+    let g_idx = find_country_by_search("G").expect("G should match");
+    assert_eq!(country_code_at(g_idx), "GA"); // Gabon (GA)
+
+    let e_idx = find_country_by_search("E").expect("E should match");
+    assert_eq!(country_code_at(e_idx), "EC"); // Ecuador (EC)
+
+    let r_idx = find_country_by_search("R").expect("R should match");
+    assert_eq!(country_code_at(r_idx), "RO"); // Romania (RO)
+
+    // 3. Test quick sequence type-ahead ("g-e-r" -> Germany [DE])
+    let ger_idx = find_country_by_search("GER").expect("GER should match Germany");
+    assert_eq!(country_code_at(ger_idx), "DE");
+
+    let germ_idx = find_country_by_search("germany").expect("germany should match");
+    assert_eq!(country_code_at(germ_idx), "DE");
+
+    // 4. Test exact 2-letter ISO code matches
+    let de_idx = find_country_by_search("de").expect("de code should match");
+    assert_eq!(country_code_at(de_idx), "DE");
+
+    let us_idx = find_country_by_search("US").expect("US should match");
+    assert_eq!(country_code_at(us_idx), "US");
+
+    // 5. Test country_badge produces clean, crisp ASCII
+    assert_eq!(country_badge("DE"), "[DE]");
+    assert_eq!(country_badge("US"), "[US]");
+    assert_eq!(country_badge(""), "[GLB]");
+    assert_eq!(country_badge("  fr  "), "[FR]");
+}
+
 
 

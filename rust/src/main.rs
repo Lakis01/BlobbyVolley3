@@ -124,6 +124,8 @@ async fn main() {
     let mut cam_target_y = 300.0 - 35.0;
     let mut cam_zoom_factor = 1.0;
     let mut is_dragging_court_slider = false;
+    let mut country_search_buf = String::new();
+    let mut country_search_time = 0.0f32;
 
     // Helper closure to save configuration
     let save_config = |cfg: &mut UserConfig,
@@ -619,9 +621,25 @@ async fn main() {
                 // Character input
                 while let Some(c) = get_char_pressed() {
                     if active_field == country_field_idx && c.is_alphabetic() {
-                        if let Some(idx) = config::country_index_by_prefix(c) {
+                        let now = global_time;
+                        // If typed quickly (< 0.85s apart), accumulate sequence (e.g. "g-e-r" -> Germany)
+                        // If typed slowly (>= 0.85s apart), start fresh single-key jump ("G" -> Gabon, "E" -> Ecuador, "R" -> Romania)
+                        if now - country_search_time > 0.85 {
+                            country_search_buf.clear();
+                        }
+                        country_search_buf.push(c.to_ascii_uppercase());
+                        country_search_time = now;
+
+                        if let Some(idx) = config::find_country_by_search(&country_search_buf) {
                             config.country_code = country_code_at(idx).to_string();
                             audio.play_ball_hit(0.2);
+                        } else {
+                            // If multi-char sequence didn't match, fallback to just this letter
+                            country_search_buf = c.to_ascii_uppercase().to_string();
+                            if let Some(idx) = config::find_country_by_search(&country_search_buf) {
+                                config.country_code = country_code_at(idx).to_string();
+                                audio.play_ball_hit(0.2);
+                            }
                         }
                     } else if c.is_alphanumeric() || c == ' ' || c == '_' || c == '-' {
                         if active_field == 0 && player1_name.len() < 16 {
@@ -637,6 +655,16 @@ async fn main() {
                         player1_name.pop();
                     } else if is_two_player && active_field == 1 {
                         player2_name.pop();
+                    } else if active_field == country_field_idx {
+                        if !country_search_buf.is_empty() {
+                            country_search_buf.pop();
+                            if let Some(idx) = config::find_country_by_search(&country_search_buf) {
+                                config.country_code = country_code_at(idx).to_string();
+                            }
+                        } else {
+                            config.country_code = "".to_string();
+                        }
+                        audio.play_ball_hit(0.15);
                     }
                 }
 
@@ -644,11 +672,13 @@ async fn main() {
                 if active_field == country_field_idx {
                     let mut c_idx = country_index(&config.country_code);
                     if is_key_pressed(KeyCode::Left) {
+                        country_search_buf.clear();
                         c_idx = (c_idx + AVAILABLE_COUNTRIES.len() - 1) % AVAILABLE_COUNTRIES.len();
                         config.country_code = country_code_at(c_idx).to_string();
                         audio.play_ball_hit(0.15);
                     }
                     if is_key_pressed(KeyCode::Right) {
+                        country_search_buf.clear();
                         c_idx = (c_idx + 1) % AVAILABLE_COUNTRIES.len();
                         config.country_code = country_code_at(c_idx).to_string();
                         audio.play_ball_hit(0.15);
@@ -657,10 +687,12 @@ async fn main() {
 
                 // Switch fields via Tab or Up/Down
                 if is_key_pressed(KeyCode::Tab) || is_key_pressed(KeyCode::Down) {
+                    country_search_buf.clear();
                     active_field = (active_field + 1) % total_fields;
                     state = AppState::PlayerSetup { is_two_player, active_field };
                 }
                 if is_key_pressed(KeyCode::Up) {
+                    country_search_buf.clear();
                     active_field = (active_field + total_fields - 1) % total_fields;
                     state = AppState::PlayerSetup { is_two_player, active_field };
                 }
@@ -1417,7 +1449,7 @@ async fn main() {
                 render_leaderboard(period_idx, entries, &player1_name, is_refreshing, global_time);
             }
             AppState::PlayerSetup { is_two_player, active_field } => {
-                render_player_setup(&player1_name, &config.country_code, &player2_name, is_two_player, active_field, global_time);
+                render_player_setup(&player1_name, &config.country_code, &player2_name, is_two_player, active_field, &country_search_buf, global_time);
             }
             AppState::ServerBrowser { selected_idx, ref servers, is_refreshing } => {
                 render_server_browser(servers, selected_idx, is_refreshing, global_time);

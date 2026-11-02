@@ -912,7 +912,7 @@ fn render_perimeter_boards(time: f32, _arena: ArenaType, x_left: f32, x_right: f
         AdBanner { name: "NEOVIM", accent: Color::new(0.35, 0.72, 0.28, 1.0), tagline: "hyper extensible" },
     ];
 
-    let panel_w = 120.0;
+    let panel_w = 138.0;
     let num_panels = banners.len();
     let scroll_speed = 18.0; // pixels per second
     let total_carousel_w = num_panels as f32 * panel_w;
@@ -935,17 +935,156 @@ fn render_perimeter_boards(time: f32, _arena: ArenaType, x_left: f32, x_right: f
         draw_rectangle_lines(px, board_y, clamped_w, board_h, 1.0, Color::new(0.2, 0.25, 0.35, 0.5));
 
         // Left accent indicator tag
-        draw_rectangle(px + 2.0, board_y + 3.0, 4.0, board_h - 6.0, ad.accent);
+        draw_rectangle(px + 2.0, board_y + 3.0, 3.0, board_h - 6.0, ad.accent);
+
+        // Handcrafted Vector Project Logo
+        if px + 24.0 < board_end_x {
+            draw_project_logo(ad.name, px + 8.0, board_y + 4.0, ad.accent);
+        }
 
         // Name and mini tagline
-        if px + 12.0 < board_end_x - 20.0 {
-            draw_text(ad.name, px + 10.0, board_y + 13.0, 12.0, WHITE);
-            draw_text(ad.tagline, px + 10.0, board_y + 21.0, 8.0, ad.accent);
+        if px + 28.0 < board_end_x - 15.0 {
+            draw_text(ad.name, px + 28.0, board_y + 13.0, 11.0, WHITE);
+            draw_text(ad.tagline, px + 28.0, board_y + 21.0, 7.5, ad.accent);
         }
     }
 
     // Glass sheen gloss overlay across top half of boards
     draw_rectangle(board_start_x, board_y, board_w, 6.0, Color::new(1.0, 1.0, 1.0, 0.08));
+}
+
+fn draw_project_logo(name: &str, x: f32, y: f32, accent: Color) {
+    match name {
+        "arch linux" => {
+            // Stylized Arch cyan triangle peak with bottom cutout
+            draw_triangle(
+                Vec2::new(x + 1.0, y + 14.0),
+                Vec2::new(x + 7.5, y + 1.5),
+                Vec2::new(x + 14.0, y + 14.0),
+                accent,
+            );
+            draw_triangle(
+                Vec2::new(x + 4.5, y + 14.0),
+                Vec2::new(x + 7.5, y + 8.5),
+                Vec2::new(x + 10.5, y + 14.0),
+                Color::new(0.08, 0.1, 0.15, 1.0),
+            );
+        }
+        "debian" => {
+            // Iconic Debian red spiral
+            draw_circle_lines(x + 7.5, y + 7.5, 5.5, 1.6, accent);
+            draw_circle(x + 7.5, y + 5.5, 2.2, accent);
+            draw_line(x + 7.5, y + 5.5, x + 10.5, y + 10.5, 1.6, accent);
+        }
+        "fedora" => {
+            // Fedora blue circle with white infinity emblem
+            draw_circle(x + 7.5, y + 7.5, 6.5, accent);
+            draw_circle_lines(x + 6.0, y + 7.5, 2.0, 1.2, WHITE);
+            draw_circle_lines(x + 9.0, y + 7.5, 2.0, 1.2, WHITE);
+            draw_line(x + 5.0, y + 7.5, x + 10.0, y + 7.5, 1.2, WHITE);
+        }
+        "CachyOS" => {
+            // Speed chevron / green energy bolt
+            draw_triangle(
+                Vec2::new(x + 2.0, y + 13.0),
+                Vec2::new(x + 9.0, y + 2.0),
+                Vec2::new(x + 14.0, y + 7.0),
+                accent,
+            );
+            draw_triangle(
+                Vec2::new(x + 4.5, y + 13.0),
+                Vec2::new(x + 8.5, y + 7.0),
+                Vec2::new(x + 13.0, y + 13.0),
+                Color::new(0.08, 0.1, 0.15, 1.0),
+            );
+        }
+        "KDE Plasma" => {
+            // Blue gear with white spokes
+            draw_circle(x + 7.5, y + 7.5, 6.0, accent);
+            draw_circle(x + 7.5, y + 7.5, 2.4, Color::new(0.08, 0.1, 0.15, 1.0));
+            draw_line(x + 7.5, y + 2.5, x + 7.5, y + 12.5, 1.3, WHITE);
+            draw_line(x + 2.5, y + 7.5, x + 12.5, y + 7.5, 1.3, WHITE);
+        }
+        "Rust" => {
+            // Orange cog / gear with 'R'
+            draw_circle_lines(x + 7.5, y + 7.5, 5.5, 1.8, accent);
+            draw_circle(x + 7.5, y + 7.5, 3.2, Color::new(0.08, 0.1, 0.15, 1.0));
+            draw_text("R", x + 5.2, y + 10.5, 9.0, accent);
+        }
+        "GODOT" => {
+            // Godot robot head with antenna & eyes
+            draw_rectangle(x + 2.5, y + 4.5, 10.0, 8.0, accent);
+            draw_line(x + 3.5, y + 2.5, x + 3.5, y + 4.5, 1.2, accent);
+            draw_line(x + 11.5, y + 2.5, x + 11.5, y + 4.5, 1.2, accent);
+            draw_circle(x + 5.2, y + 8.0, 1.2, WHITE);
+            draw_circle(x + 9.8, y + 8.0, 1.2, WHITE);
+            draw_line(x + 5.5, y + 10.5, x + 9.5, y + 10.5, 1.0, WHITE);
+        }
+        "blender" => {
+            // Orange circle with blue center & radiating arms
+            draw_circle(x + 7.5, y + 8.5, 5.0, accent);
+            draw_circle(x + 7.5, y + 8.5, 2.4, Color::new(0.2, 0.6, 0.9, 1.0));
+            draw_circle(x + 7.5, y + 8.5, 1.0, WHITE);
+            draw_line(x + 7.5, y + 2.0, x + 7.5, y + 4.5, 1.3, accent);
+            draw_line(x + 3.5, y + 3.5, x + 5.5, y + 5.5, 1.3, accent);
+            draw_line(x + 11.5, y + 3.5, x + 9.5, y + 5.5, 1.3, accent);
+        }
+        "FFmpeg" => {
+            // Multi-colored blocks
+            draw_rectangle(x + 2.5, y + 3.5, 4.0, 8.5, accent);
+            draw_rectangle(x + 7.5, y + 6.5, 4.5, 5.5, Color::new(0.85, 0.2, 0.2, 1.0));
+            draw_rectangle(x + 7.5, y + 2.5, 4.5, 3.2, Color::new(0.2, 0.6, 0.9, 1.0));
+        }
+        "mpv" => {
+            // Purple circle with white play triangle
+            draw_circle(x + 7.5, y + 7.5, 6.2, accent);
+            draw_triangle(
+                Vec2::new(x + 6.0, y + 4.5),
+                Vec2::new(x + 11.0, y + 7.5),
+                Vec2::new(x + 6.0, y + 10.5),
+                WHITE,
+            );
+        }
+        "git" => {
+            // Red diamond with commit branch nodes
+            draw_line(x + 7.5, y + 2.5, x + 12.5, y + 7.5, 1.5, accent);
+            draw_line(x + 12.5, y + 7.5, x + 7.5, y + 12.5, 1.5, accent);
+            draw_line(x + 7.5, y + 12.5, x + 2.5, y + 7.5, 1.5, accent);
+            draw_line(x + 2.5, y + 7.5, x + 7.5, y + 2.5, 1.5, accent);
+            draw_circle(x + 5.5, y + 7.5, 1.2, WHITE);
+            draw_circle(x + 9.5, y + 7.5, 1.2, WHITE);
+            draw_line(x + 5.5, y + 7.5, x + 9.5, y + 7.5, 1.0, WHITE);
+        }
+        "GitHub" => {
+            // White Octocat badge
+            draw_circle(x + 7.5, y + 7.5, 6.2, WHITE);
+            draw_circle(x + 7.5, y + 8.2, 4.2, Color::new(0.08, 0.1, 0.15, 1.0));
+            draw_triangle(Vec2::new(x + 4.2, y + 4.8), Vec2::new(x + 5.8, y + 6.2), Vec2::new(x + 4.2, y + 7.2), Color::new(0.08, 0.1, 0.15, 1.0));
+            draw_triangle(Vec2::new(x + 10.8, y + 4.8), Vec2::new(x + 9.2, y + 6.2), Vec2::new(x + 10.8, y + 7.2), Color::new(0.08, 0.1, 0.15, 1.0));
+        }
+        "OpenCode" => {
+            // Cyan code tags: < / >
+            draw_text("<", x + 1.5, y + 11.0, 10.0, accent);
+            draw_text("/", x + 6.0, y + 11.0, 9.0, WHITE);
+            draw_text(">", x + 9.5, y + 11.0, 10.0, accent);
+        }
+        "Navidrome" => {
+            // Soundwave bars in teal
+            draw_rectangle(x + 2.5, y + 7.0, 2.0, 6.0, accent);
+            draw_rectangle(x + 5.5, y + 4.0, 2.0, 9.0, accent);
+            draw_rectangle(x + 8.5, y + 2.0, 2.0, 11.0, accent);
+            draw_rectangle(x + 11.5, y + 5.0, 2.0, 8.0, accent);
+        }
+        "NEOVIM" => {
+            // Green/Cyan angular 'N'
+            draw_line(x + 3.5, y + 12.5, x + 3.5, y + 2.5, 2.0, accent);
+            draw_line(x + 3.5, y + 2.5, x + 11.5, y + 12.5, 2.0, Color::new(0.2, 0.6, 0.9, 1.0));
+            draw_line(x + 11.5, y + 12.5, x + 11.5, y + 2.5, 2.0, accent);
+        }
+        _ => {
+            draw_circle(x + 7.5, y + 7.5, 5.0, accent);
+        }
+    }
 }
 
 // Helpers
@@ -1364,8 +1503,7 @@ pub fn render_court_size_visualizer(time: f32, court_width: f32, aspect: f32) {
     } else if is_default {
         format!("{:.0}px [STANDARD COURT WIDTH]", court_width)
     } else {
-        let pct = ((court_width - 800.0) / (max_w - 800.0) * 100.0).round();
-        format!("{:.0}px [ENLARGED +{:.0}%]", court_width, pct)
+        format!("{:.0}px [ENLARGED COURT WIDTH]", court_width)
     };
 
     let font_size = 18.0;

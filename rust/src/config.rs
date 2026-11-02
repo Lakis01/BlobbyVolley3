@@ -45,7 +45,7 @@ impl UserConfig {
 }
 
 pub fn default_elo_range() -> usize {
-    1 // Balanced (±100)
+    1 // Balanced (+/-100)
 }
 
 pub const AVAILABLE_COUNTRIES: &[(&str, &str)] = &[
@@ -106,10 +106,10 @@ pub const AVAILABLE_COUNTRIES: &[(&str, &str)] = &[
     ("CR", "Costa Rica (CR)"),
     ("HR", "Croatia (HR)"),
     ("CU", "Cuba (CU)"),
-    ("CW", "Curaçao (CW)"),
+    ("CW", "Curacao (CW)"),
     ("CY", "Cyprus (CY)"),
     ("CZ", "Czechia (CZ)"),
-    ("CI", "Côte d’Ivoire (CI)"),
+    ("CI", "Cote d'Ivoire (CI)"),
     ("DK", "Denmark (DK)"),
     ("DJ", "Djibouti (DJ)"),
     ("DM", "Dominica (DM)"),
@@ -232,7 +232,7 @@ pub const AVAILABLE_COUNTRIES: &[(&str, &str)] = &[
     ("RO", "Romania (RO)"),
     ("RU", "Russia (RU)"),
     ("RW", "Rwanda (RW)"),
-    ("RE", "Réunion (RE)"),
+    ("RE", "Reunion (RE)"),
     ("WS", "Samoa (WS)"),
     ("SM", "San Marino (SM)"),
     ("SA", "Saudi Arabia (SA)"),
@@ -252,7 +252,7 @@ pub const AVAILABLE_COUNTRIES: &[(&str, &str)] = &[
     ("SS", "South Sudan (SS)"),
     ("ES", "Spain (ES)"),
     ("LK", "Sri Lanka (LK)"),
-    ("BL", "St. Barthélemy (BL)"),
+    ("BL", "St. Barthelemy (BL)"),
     ("SH", "St. Helena (SH)"),
     ("KN", "St. Kitts & Nevis (KN)"),
     ("LC", "St. Lucia (LC)"),
@@ -265,7 +265,7 @@ pub const AVAILABLE_COUNTRIES: &[(&str, &str)] = &[
     ("SE", "Sweden (SE)"),
     ("CH", "Switzerland (CH)"),
     ("SY", "Syria (SY)"),
-    ("ST", "São Tomé & Príncipe (ST)"),
+    ("ST", "Sao Tome & Principe (ST)"),
     ("TW", "Taiwan (TW)"),
     ("TJ", "Tajikistan (TJ)"),
     ("TZ", "Tanzania (TZ)"),
@@ -279,7 +279,7 @@ pub const AVAILABLE_COUNTRIES: &[(&str, &str)] = &[
     ("TM", "Turkmenistan (TM)"),
     ("TC", "Turks & Caicos Islands (TC)"),
     ("TV", "Tuvalu (TV)"),
-    ("TR", "Türkiye (TR)"),
+    ("TR", "Turkiye (TR)"),
     ("UM", "U.S. Outlying Islands (UM)"),
     ("VI", "U.S. Virgin Islands (VI)"),
     ("GB", "UK (GB)"),
@@ -298,7 +298,7 @@ pub const AVAILABLE_COUNTRIES: &[(&str, &str)] = &[
     ("YE", "Yemen (YE)"),
     ("ZM", "Zambia (ZM)"),
     ("ZW", "Zimbabwe (ZW)"),
-    ("AX", "Åland Islands (AX)"),
+    ("AX", "Aland Islands (AX)"),
 ];
 
 pub fn country_index(code: &str) -> usize {
@@ -314,44 +314,55 @@ pub fn country_display(code: &str) -> &'static str {
 }
 
 pub fn country_badge(code: &str) -> String {
-    if code.is_empty() {
-        "🌐".to_string()
+    let c = code.trim().to_ascii_uppercase();
+    if c.is_empty() {
+        "[GLB]".to_string()
     } else {
-        let mut chars = code.chars();
-        if let (Some(c1), Some(c2)) = (chars.next(), chars.next()) {
-            if c1.is_ascii_alphabetic() && c2.is_ascii_alphabetic() {
-                let u1 = 0x1F1E6 + (c1.to_ascii_uppercase() as u32 - 'A' as u32);
-                let u2 = 0x1F1E6 + (c2.to_ascii_uppercase() as u32 - 'A' as u32);
-                if let (Some(ch1), Some(ch2)) = (char::from_u32(u1), char::from_u32(u2)) {
-                    return format!("{}{} [{}]", ch1, ch2, code);
-                }
-            }
-        }
-        format!("[{}]", code)
+        format!("[{}]", c)
     }
 }
 
-pub fn country_index_by_prefix(prefix: char) -> Option<usize> {
-    let p = prefix.to_ascii_uppercase();
-    AVAILABLE_COUNTRIES.iter().position(|&(code, name)| {
-        code.starts_with(p) || name.to_ascii_uppercase().starts_with(p)
+pub fn find_country_by_search(query: &str) -> Option<usize> {
+    let q = query.trim().to_ascii_uppercase();
+    if q.is_empty() {
+        return None;
+    }
+    // 1. Direct match on 2-letter ISO code
+    if let Some(pos) = AVAILABLE_COUNTRIES.iter().position(|&(code, _)| code == q) {
+        return Some(pos);
+    }
+    // 2. Real Country name prefix match (skip Global (None) placeholder unless explicitly requested)
+    if let Some(pos) = AVAILABLE_COUNTRIES.iter().position(|&(code, name)| {
+        (!code.is_empty() || q == "GLOBAL" || q == "NONE")
+            && name.to_ascii_uppercase().starts_with(&q)
+    }) {
+        return Some(pos);
+    }
+    // 3. Fallback: code starts with query
+    AVAILABLE_COUNTRIES.iter().position(|&(code, _)| {
+        !code.is_empty() && code.starts_with(&q)
     })
+}
+
+#[allow(dead_code)]
+pub fn country_index_by_prefix(prefix: char) -> Option<usize> {
+    find_country_by_search(&prefix.to_string())
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum EloSearchRange {
-    Strict,       // ±50
-    Balanced,     // ±100
-    Wide,         // ±250
+    Strict,       // +/-50
+    Balanced,     // +/-100
+    Wide,         // +/-250
     Unrestricted, // Match Any Available Opponent
 }
 
 impl EloSearchRange {
     pub fn name(self) -> &'static str {
         match self {
-            EloSearchRange::Strict => "Strict (±50)",
-            EloSearchRange::Balanced => "Balanced (±100)",
-            EloSearchRange::Wide => "Wide (±250)",
+            EloSearchRange::Strict => "Strict (+/-50)",
+            EloSearchRange::Balanced => "Balanced (+/-100)",
+            EloSearchRange::Wide => "Wide (+/-250)",
             EloSearchRange::Unrestricted => "Unrestricted (Any Elo)",
         }
     }
@@ -425,7 +436,7 @@ impl Default for UserConfig {
             matches_won: 0,
             matches_played: 0,
             country_code: "".to_string(),
-            elo_search_range: 1, // Balanced (±100)
+            elo_search_range: 1, // Balanced (+/-100)
             high_ball_camera: 0, // Off-Screen Indicator by default
             court_size: 0,       // Standard (800px) by default
             court_width_factor: 0.0, // Standard (800px) by default

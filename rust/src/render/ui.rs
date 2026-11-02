@@ -578,7 +578,7 @@ pub fn render_main_menu(
                 } else if court_width_factor >= 0.99 {
                     format!("{:.0}px (Window Border)", current_court_width)
                 } else {
-                    format!("{:.0}px (+{:.0}%)", current_court_width, court_width_factor * 100.0)
+                    format!("{:.0}px", current_court_width)
                 };
                 let val_dim = measure_text(&val_str, None, 13, 1.0);
                 draw_text(
@@ -618,6 +618,9 @@ pub fn render_main_menu(
                 } else {
                     Color::new(0.85, 0.9, 1.0, 0.9)
                 };
+                if layout.item == MenuItem::PlayerProfile && !country_code.is_empty() {
+                    draw_mini_flag(country_code, val_x - 24.0, text_y - 12.0, 18.0, 12.0);
+                }
                 draw_text(&val, val_x, text_y, 18.0, val_col);
             }
         } else {
@@ -697,12 +700,126 @@ pub fn render_main_menu(
     );
 }
 
+pub fn draw_mini_flag(code: &str, x: f32, y: f32, w: f32, h: f32) {
+    let c = code.trim().to_ascii_uppercase();
+    draw_rectangle(x, y, w, h, Color::new(0.08, 0.12, 0.2, 1.0));
+
+    match c.as_str() {
+        "DE" => { // Germany: Black, Red, Gold horizontal
+            let sh = h / 3.0;
+            draw_rectangle(x, y, w, sh, Color::new(0.1, 0.1, 0.1, 1.0));
+            draw_rectangle(x, y + sh, w, sh, Color::new(0.85, 0.1, 0.1, 1.0));
+            draw_rectangle(x, y + sh * 2.0, w, h - sh * 2.0, Color::new(1.0, 0.8, 0.1, 1.0));
+        }
+        "FR" => { // France: Blue, White, Red vertical
+            let sw = w / 3.0;
+            draw_rectangle(x, y, sw, h, Color::new(0.0, 0.33, 0.65, 1.0));
+            draw_rectangle(x + sw, y, sw, h, WHITE);
+            draw_rectangle(x + sw * 2.0, y, w - sw * 2.0, h, Color::new(0.9, 0.15, 0.2, 1.0));
+        }
+        "IT" => { // Italy: Green, White, Red vertical
+            let sw = w / 3.0;
+            draw_rectangle(x, y, sw, h, Color::new(0.0, 0.58, 0.27, 1.0));
+            draw_rectangle(x + sw, y, sw, h, WHITE);
+            draw_rectangle(x + sw * 2.0, y, w - sw * 2.0, h, Color::new(0.85, 0.18, 0.2, 1.0));
+        }
+        "ES" => { // Spain: Red, Yellow (double), Red horizontal
+            draw_rectangle(x, y, w, h * 0.25, Color::new(0.8, 0.1, 0.15, 1.0));
+            draw_rectangle(x, y + h * 0.25, w, h * 0.5, Color::new(1.0, 0.78, 0.1, 1.0));
+            draw_rectangle(x, y + h * 0.75, w, h * 0.25, Color::new(0.8, 0.1, 0.15, 1.0));
+        }
+        "US" => { // USA: Red/White stripes + Blue canton
+            let sh = h / 7.0;
+            for s in 0..7 {
+                let col = if s % 2 == 0 { Color::new(0.8, 0.15, 0.2, 1.0) } else { WHITE };
+                draw_rectangle(x, y + s as f32 * sh, w, sh + 0.5, col);
+            }
+            draw_rectangle(x, y, w * 0.42, h * 0.58, Color::new(0.0, 0.18, 0.45, 1.0));
+        }
+        "GB" | "UK" => { // UK: Union Jack
+            draw_rectangle(x, y, w, h, Color::new(0.0, 0.15, 0.45, 1.0));
+            draw_line(x, y, x + w, y + h, 2.0, WHITE);
+            draw_line(x, y + h, x + w, y, 2.0, WHITE);
+            draw_line(x + w * 0.5, y, x + w * 0.5, y + h, 3.0, WHITE);
+            draw_line(x, y + h * 0.5, x + w, y + h * 0.5, 3.0, WHITE);
+            draw_line(x + w * 0.5, y, x + w * 0.5, y + h, 1.5, Color::new(0.85, 0.1, 0.15, 1.0));
+            draw_line(x, y + h * 0.5, x + w, y + h * 0.5, 1.5, Color::new(0.85, 0.1, 0.15, 1.0));
+        }
+        "NL" => { // Netherlands: Red, White, Blue horizontal
+            let sh = h / 3.0;
+            draw_rectangle(x, y, w, sh, Color::new(0.8, 0.15, 0.2, 1.0));
+            draw_rectangle(x, y + sh, w, sh, WHITE);
+            draw_rectangle(x, y + sh * 2.0, w, h - sh * 2.0, Color::new(0.1, 0.25, 0.6, 1.0));
+        }
+        "BE" => { // Belgium: Black, Yellow, Red vertical
+            let sw = w / 3.0;
+            draw_rectangle(x, y, sw, h, Color::new(0.1, 0.1, 0.1, 1.0));
+            draw_rectangle(x + sw, y, sw, h, Color::new(0.95, 0.85, 0.15, 1.0));
+            draw_rectangle(x + sw * 2.0, y, w - sw * 2.0, h, Color::new(0.9, 0.15, 0.2, 1.0));
+        }
+        "PL" => { // Poland: White, Red horizontal
+            draw_rectangle(x, y, w, h * 0.5, WHITE);
+            draw_rectangle(x, y + h * 0.5, w, h * 0.5, Color::new(0.85, 0.15, 0.25, 1.0));
+        }
+        "UA" => { // Ukraine: Blue, Yellow horizontal
+            draw_rectangle(x, y, w, h * 0.5, Color::new(0.0, 0.4, 0.8, 1.0));
+            draw_rectangle(x, y + h * 0.5, w, h * 0.5, Color::new(1.0, 0.85, 0.1, 1.0));
+        }
+        "SE" => { // Sweden: Blue with yellow cross
+            draw_rectangle(x, y, w, h, Color::new(0.0, 0.35, 0.65, 1.0));
+            draw_line(x + w * 0.35, y, x + w * 0.35, y + h, 2.5, Color::new(1.0, 0.8, 0.1, 1.0));
+            draw_line(x, y + h * 0.5, x + w, y + h * 0.5, 2.5, Color::new(1.0, 0.8, 0.1, 1.0));
+        }
+        "JP" => { // Japan: White with red sun circle
+            draw_rectangle(x, y, w, h, WHITE);
+            draw_circle(x + w * 0.5, y + h * 0.5, h * 0.3, Color::new(0.8, 0.1, 0.2, 1.0));
+        }
+        "BR" => { // Brazil: Green with yellow diamond & blue circle
+            draw_rectangle(x, y, w, h, Color::new(0.0, 0.58, 0.25, 1.0));
+            draw_triangle(Vec2::new(x + w * 0.5, y + 1.0), Vec2::new(x + 1.5, y + h * 0.5), Vec2::new(x + w * 0.5, y + h - 1.0), Color::new(1.0, 0.85, 0.1, 1.0));
+            draw_triangle(Vec2::new(x + w * 0.5, y + 1.0), Vec2::new(x + w - 1.5, y + h * 0.5), Vec2::new(x + w * 0.5, y + h - 1.0), Color::new(1.0, 0.85, 0.1, 1.0));
+            draw_circle(x + w * 0.5, y + h * 0.5, h * 0.22, Color::new(0.1, 0.2, 0.55, 1.0));
+        }
+        "CH" => { // Switzerland: Red with white cross
+            draw_rectangle(x, y, w, h, Color::new(0.85, 0.1, 0.15, 1.0));
+            draw_rectangle(x + w * 0.5 - 1.5, y + h * 0.2, 3.0, h * 0.6, WHITE);
+            draw_rectangle(x + w * 0.2, y + h * 0.5 - 1.5, w * 0.6, 3.0, WHITE);
+        }
+        "AT" => { // Austria: Red, White, Red horizontal
+            let sh = h / 3.0;
+            draw_rectangle(x, y, w, sh, Color::new(0.85, 0.15, 0.2, 1.0));
+            draw_rectangle(x, y + sh, w, sh, WHITE);
+            draw_rectangle(x, y + sh * 2.0, w, h - sh * 2.0, Color::new(0.85, 0.15, 0.2, 1.0));
+        }
+        "CA" => { // Canada: Red, White, Red vertical
+            draw_rectangle(x, y, w * 0.25, h, Color::new(0.85, 0.1, 0.15, 1.0));
+            draw_rectangle(x + w * 0.25, y, w * 0.5, h, WHITE);
+            draw_rectangle(x + w * 0.75, y, w * 0.25, h, Color::new(0.85, 0.1, 0.15, 1.0));
+            draw_circle(x + w * 0.5, y + h * 0.5, 2.5, Color::new(0.85, 0.1, 0.15, 1.0));
+        }
+        _ => { // Global / other: stylized globe or badge code
+            draw_rectangle(x, y, w, h, Color::new(0.12, 0.16, 0.24, 1.0));
+            if c.is_empty() {
+                draw_circle_lines(x + w * 0.5, y + h * 0.5, h * 0.35, 1.2, Color::new(0.2, 0.8, 1.0, 0.9));
+                draw_line(x + 2.0, y + h * 0.5, x + w - 2.0, y + h * 0.5, 1.0, Color::new(0.2, 0.8, 1.0, 0.9));
+            } else {
+                let fs = (h * 0.7).max(8.0);
+                let dim = measure_text(&c, None, fs as u16, 1.0);
+                draw_text(&c, x + (w - dim.width) * 0.5, y + h * 0.75, fs, Color::new(0.3, 0.9, 1.0, 1.0));
+            }
+        }
+    }
+    // Clean flag border
+    draw_rectangle_lines(x, y, w, h, 1.0, Color::new(0.3, 0.45, 0.65, 0.7));
+}
+
 pub fn render_player_setup(
     p1_name: &str,
     country_code: &str,
     p2_name: &str,
     is_two_player: bool,
     active_field: usize,
+    search_query: &str,
     time: f32,
 ) {
     draw_rectangle(0.0, 0.0, VIRTUAL_WIDTH, VIRTUAL_HEIGHT, Color::new(0.04, 0.05, 0.1, 0.85));
@@ -754,10 +871,21 @@ pub fn render_player_setup(
     let country_field_idx = if is_two_player { 2 } else { 1 };
     let fc_y = next_y;
     draw_text("Country / Flag Badge (Optional):", card_x + 40.0, fc_y - 8.0, 17.0, WHITE);
+
+    // Live search query badge if active
+    if active_field == country_field_idx && !search_query.is_empty() {
+        let q_str = format!("Jump to: \"{}\"", search_query);
+        let q_dim = measure_text(&q_str, None, 14, 1.0);
+        draw_text(&q_str, card_x + card_w - 40.0 - q_dim.width, fc_y - 8.0, 14.0, Color::new(1.0, 0.9, 0.35, 1.0));
+    }
+
     let boxc_rect = Rect::new(card_x + 40.0, fc_y, card_w - 80.0, 36.0);
     draw_rectangle(boxc_rect.x, boxc_rect.y, boxc_rect.w, boxc_rect.h, Color::new(0.05, 0.08, 0.14, 0.95));
     let fc_border = if active_field == country_field_idx { Color::new(0.2, 0.9, 1.0, 1.0) } else { Color::new(0.3, 0.45, 0.65, 0.6) };
     draw_rectangle_lines(boxc_rect.x, boxc_rect.y, boxc_rect.w, boxc_rect.h, 1.5, fc_border);
+
+    // Mini Flag on the left of the field
+    draw_mini_flag(country_code, boxc_rect.x + 10.0, boxc_rect.y + 7.0, 32.0, 22.0);
 
     let display_str = format!("<  {}  >", country_display(country_code));
     let display_dim = measure_text(&display_str, None, 18, 1.0);
@@ -771,7 +899,7 @@ pub fn render_player_setup(
 
     // Confirm Prompt
     let btn_y = card_y + card_h - 32.0;
-    let hint = "Tab / Up / Down: Switch Field | Left / Right: Change Country | Enter: Confirm";
+    let hint = "Type letters to jump (e.g. 'GER') | Left / Right: Cycle | Tab: Next | Enter: Confirm";
     let hint_dim = measure_text(hint, None, 13, 1.0);
     draw_text(hint, (VIRTUAL_WIDTH - hint_dim.width) * 0.5, btn_y, 13.0, Color::new(0.3, 0.95, 1.0, 0.9));
 }
