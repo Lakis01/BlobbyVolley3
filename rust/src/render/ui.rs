@@ -406,9 +406,13 @@ pub fn render_main_menu(
 ) {
     let max_court_w = (600.0 * aspect).max(800.0);
     let current_court_width = (800.0 + (max_court_w - 800.0) * court_width_factor.clamp(0.0, 1.0)).round();
+    let is_sizing_court = items.get(selected_item) == Some(&MenuItem::CourtSize);
 
-    // Backdrop dimming
-    draw_rectangle(0.0, 0.0, VIRTUAL_WIDTH, VIRTUAL_HEIGHT, Color::new(0.04, 0.05, 0.1, 0.72));
+    // Fullscreen backdrop dimming (softened when sizing court so visualizer in back is crystal clear)
+    let ui_cam_w = VIRTUAL_HEIGHT * aspect;
+    let ui_cam_x0 = (VIRTUAL_WIDTH - ui_cam_w) * 0.5;
+    let dim_alpha = if is_sizing_court { 0.28 } else { 0.72 };
+    draw_rectangle(ui_cam_x0, 0.0, ui_cam_w, VIRTUAL_HEIGHT, Color::new(0.04, 0.05, 0.1, dim_alpha));
 
     // Glowing 2026 Title
     let title = "BLOBBY VOLLEY 3";
@@ -430,14 +434,25 @@ pub fn render_main_menu(
         Color::new(1.0, 0.85, 0.3, 0.9),
     );
 
-    // Menu Card
+    // Menu Card (frosted glass transparency when sizing court)
     let card_w = 560.0;
     let card_h = 430.0;
     let card_x = 24.0;
     let card_y = 115.0;
 
-    draw_rectangle(card_x, card_y, card_w, card_h, Color::new(0.08, 0.1, 0.18, 0.92));
-    draw_rectangle_lines(card_x, card_y, card_w, card_h, 1.5, Color::new(0.3, 0.5, 0.85, 0.5));
+    let card_bg = if is_sizing_court {
+        Color::new(0.06, 0.09, 0.16, 0.38)
+    } else {
+        Color::new(0.08, 0.1, 0.18, 0.92)
+    };
+    let card_border = if is_sizing_court {
+        Color::new(0.2, 0.85, 1.0, 0.85)
+    } else {
+        Color::new(0.3, 0.5, 0.85, 0.5)
+    };
+
+    draw_rectangle(card_x, card_y, card_w, card_h, card_bg);
+    draw_rectangle_lines(card_x, card_y, card_w, card_h, 1.5, card_border);
 
     let layouts = get_main_menu_layout(items);
 
@@ -624,8 +639,19 @@ pub fn render_main_menu(
     let pod_w = 176.0;
     let pod_h = card_h;
 
-    draw_rectangle(pod_x, pod_y, pod_w, pod_h, Color::new(0.08, 0.1, 0.18, 0.92));
-    draw_rectangle_lines(pod_x, pod_y, pod_w, pod_h, 1.5, Color::new(0.3, 0.5, 0.85, 0.5));
+    let pod_bg = if is_sizing_court {
+        Color::new(0.06, 0.09, 0.16, 0.38)
+    } else {
+        Color::new(0.08, 0.1, 0.18, 0.92)
+    };
+    let pod_border = if is_sizing_court {
+        Color::new(0.2, 0.85, 1.0, 0.85)
+    } else {
+        Color::new(0.3, 0.5, 0.85, 0.5)
+    };
+
+    draw_rectangle(pod_x, pod_y, pod_w, pod_h, pod_bg);
+    draw_rectangle_lines(pod_x, pod_y, pod_w, pod_h, 1.5, pod_border);
 
     let mouse_target = virt_mouse.unwrap_or(Vec2::new(pod_x - 100.0, pod_y + 200.0));
 

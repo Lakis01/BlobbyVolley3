@@ -1285,3 +1285,103 @@ fn render_stadium_crowd(
         }
     }
 }
+
+// =========================================================================
+// REAL-TIME COURT SIZE VISUALIZER (HUD Measurement Overlay in World Space)
+// =========================================================================
+pub fn render_court_size_visualizer(time: f32, court_width: f32, aspect: f32) {
+    let max_w = (600.0 * aspect).max(800.0);
+    let is_at_window_border = (court_width - max_w).abs() <= 1.0;
+    let is_default = (court_width - 800.0).abs() <= 1.0;
+
+    let left_x = 0.0;
+    let right_x = court_width;
+    let ground_y = GROUND_PLANE_HEIGHT_MAX; // 500.0
+    let sky_y = -350.0;
+
+    let pulse = (time * 6.0).sin().abs() * 0.25 + 0.75;
+    let accent_col = if is_at_window_border {
+        Color::new(1.0, 0.92, 0.3, 0.95) // Gold when reaching window edges
+    } else {
+        Color::new(0.2, 0.9, 1.0, 0.95) // Cyan
+    };
+    let glow_col = Color::new(accent_col.r, accent_col.g, accent_col.b, 0.35 * pulse);
+
+    // 1. Semi-transparent illuminated court floor highlight
+    draw_rectangle(
+        left_x,
+        ground_y - 70.0,
+        court_width,
+        70.0,
+        Color::new(accent_col.r * 0.5, accent_col.g * 0.7, accent_col.b, 0.12 * pulse),
+    );
+    draw_line(left_x, ground_y, right_x, ground_y, 4.5, accent_col);
+
+    // 2. High-Tech Boundary Vertical Beacons (Left & Right)
+    for (x, is_left) in [(left_x, true), (right_x, false)] {
+        // Outer soft glow beam
+        draw_line(x, sky_y, x, ground_y, 14.0, glow_col);
+        // Inner core laser beam
+        draw_line(x, sky_y, x, ground_y, 3.0, Color::new(1.0, 1.0, 1.0, 0.95));
+
+        // Animated scanning chevrons moving along the beam
+        let chevrons = 6;
+        for i in 0..chevrons {
+            let offset_t = (time * 0.8 + i as f32 / chevrons as f32) % 1.0;
+            let cy = ground_y - offset_t * (ground_y - sky_y);
+            let dir = if is_left { 12.0 } else { -12.0 };
+            draw_line(x, cy - 8.0, x + dir, cy, 2.5, accent_col);
+            draw_line(x + dir, cy, x, cy + 8.0, 2.5, accent_col);
+        }
+
+        // Ground anchor pulse rings
+        draw_circle(x, ground_y, 12.0, glow_col);
+        draw_circle(x, ground_y, 6.0, accent_col);
+        draw_circle_lines(x, ground_y, 18.0 * pulse, 1.5, glow_col);
+    }
+
+    // 3. Center Net Guide Line
+    let net_x = court_width * 0.5;
+    draw_line(net_x, 160.0, net_x, ground_y, 1.5, Color::new(1.0, 0.9, 0.3, 0.45 * pulse));
+
+    // 4. Overhead Dimension Measurement Caliper
+    let cal_y = 120.0;
+    // Caliper line
+    draw_line(left_x, cal_y, right_x, cal_y, 2.5, accent_col);
+    // End vertical ticks
+    draw_line(left_x, cal_y - 14.0, left_x, cal_y + 14.0, 3.0, accent_col);
+    draw_line(right_x, cal_y - 14.0, right_x, cal_y + 14.0, 3.0, accent_col);
+
+    // Outward pointing arrows at boundaries
+    draw_line(left_x, cal_y, left_x + 14.0, cal_y - 8.0, 2.5, accent_col);
+    draw_line(left_x, cal_y, left_x + 14.0, cal_y + 8.0, 2.5, accent_col);
+    draw_line(right_x, cal_y, right_x - 14.0, cal_y - 8.0, 2.5, accent_col);
+    draw_line(right_x, cal_y, right_x - 14.0, cal_y + 8.0, 2.5, accent_col);
+
+    // Center Badge with current measurement and status
+    let label = if is_at_window_border {
+        format!("{:.0}px [WINDOW BORDERS / SCREEN EDGE]", court_width)
+    } else if is_default {
+        format!("{:.0}px [STANDARD COURT WIDTH]", court_width)
+    } else {
+        let pct = ((court_width - 800.0) / (max_w - 800.0) * 100.0).round();
+        format!("{:.0}px [ENLARGED +{:.0}%]", court_width, pct)
+    };
+
+    let font_size = 18.0;
+    let dim = measure_text(&label, None, font_size as u16, 1.0);
+    let box_w = dim.width + 36.0;
+    let box_h = 32.0;
+    let box_x = net_x - box_w * 0.5;
+    let box_y = cal_y - box_h * 0.5;
+
+    draw_rectangle(box_x, box_y, box_w, box_h, Color::new(0.04, 0.08, 0.16, 0.95));
+    draw_rectangle_lines(box_x, box_y, box_w, box_h, 1.8, accent_col);
+    draw_text(&label, box_x + 18.0, box_y + 22.0, font_size, if is_at_window_border { Color::new(1.0, 0.95, 0.35, 1.0) } else { WHITE });
+
+    // Left & Right boundary callout labels at floor level
+    draw_text("0px [LEFT WALL]", left_x + 10.0, ground_y - 12.0, 14.0, accent_col);
+    let right_lbl = format!("[RIGHT WALL] {:.0}px", court_width);
+    let r_dim = measure_text(&right_lbl, None, 14, 1.0);
+    draw_text(&right_lbl, right_x - r_dim.width - 10.0, ground_y - 12.0, 14.0, accent_col);
+}

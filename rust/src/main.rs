@@ -24,7 +24,7 @@ use net::{NetworkHost, NetworkClient, NetEvent, ServerEntry, query_master_server
 use render::blob::{render_blobby, BlobTheme};
 use render::ball::{render_ball, BallTrail};
 use render::net::NetRenderer;
-use render::arenas::{render_arena, ArenaType};
+use render::arenas::{render_arena, ArenaType, render_court_size_visualizer};
 use render::ui::*;
 use config::{UserConfig, EloSearchRange, country_badge, country_index, country_code_at, AVAILABLE_COUNTRIES};
 use glicko::GlickoRating;
@@ -1248,6 +1248,28 @@ async fn main() {
         // =====================================================================
         // RENDERING PIPELINE
         // =====================================================================
+        // Synchronize background court width in main menu / non-playing states
+        let is_menu_active = state == AppState::MainMenu || state == AppState::ExitConfirm;
+        let menu_items = if is_menu_active {
+            render::ui::get_menu_items_for_mode(game_mode)
+        } else {
+            Vec::new()
+        };
+        let is_sizing_court = is_menu_active && (
+            menu_items.get(menu_selected) == Some(&render::ui::MenuItem::CourtSize)
+            || is_dragging_court_slider
+        );
+
+        if is_menu_active {
+            let is_local_mode = matches!(game_mode, GameMode::SinglePlayer | GameMode::TwoPlayerLocal | GameMode::BotVsBot);
+            let target_court_w = if is_local_mode {
+                config.get_court_width(aspect)
+            } else {
+                800.0
+            };
+            physics.set_court_width(target_court_w);
+        }
+
         clear_background(Color::new(0.05, 0.05, 0.08, 1.0));
 
         // Dynamic camera zoom out for high balls & shifted 2D scenery down
@@ -1329,6 +1351,11 @@ async fn main() {
 
         // 5. Render Particle Systems & Visual Juice
         vfx.render();
+
+        // 5b. Real-Time Court Size Visualizer in World Space when sizing court in menu
+        if is_sizing_court {
+            render_court_size_visualizer(global_time, world_court_w, aspect);
+        }
 
         // 6. UI Overlay Camera
         set_default_camera();

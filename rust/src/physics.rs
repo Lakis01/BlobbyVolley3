@@ -185,6 +185,14 @@ impl PhysicWorld {
         self.court_width
     }
 
+    pub fn set_court_width(&mut self, new_width: f32) {
+        if (self.court_width - new_width).abs() > 0.01 {
+            self.court_width = new_width;
+            self.reset_players();
+            self.reset_ball(Some(self.current_ball_side));
+        }
+    }
+
     pub fn reset_players(&mut self) {
         let p1_x = self.court_width * 0.25;
         let p2_x = self.court_width * 0.75;

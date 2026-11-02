@@ -489,6 +489,41 @@ fn test_court_width_slider_and_screen_border_scaling() {
 }
 
 #[test]
+fn test_dynamic_court_width_resizing_and_player_reanchoring() {
+    let mut physics = PhysicWorld::new();
+    assert_eq!(physics.court_width, 800.0);
+    assert_eq!(physics.blobs[0].pos.x, 200.0);
+    assert_eq!(physics.blobs[1].pos.x, 600.0);
+    assert_eq!(physics.net_x(), 400.0);
+
+    // Dynamically scale court to 16:10 window edge (960.0 px)
+    physics.set_court_width(960.0);
+    assert_eq!(physics.court_width, 960.0);
+    assert_eq!(physics.blobs[0].pos.x, 240.0);
+    assert_eq!(physics.blobs[1].pos.x, 720.0);
+    assert_eq!(physics.net_x(), 480.0);
+    assert_eq!(physics.right_plane(), 960.0);
+
+    // Dynamically scale court to 50% slider value (880.0 px)
+    physics.set_court_width(880.0);
+    assert_eq!(physics.court_width, 880.0);
+    assert_eq!(physics.blobs[0].pos.x, 220.0);
+    assert_eq!(physics.blobs[1].pos.x, 660.0);
+    assert_eq!(physics.net_x(), 440.0);
+
+    // Calling with same width is stable
+    physics.set_court_width(880.0);
+    assert_eq!(physics.court_width, 880.0);
+
+    // Return to standard 800.0 px (e.g. switching back or entering online mode)
+    physics.set_court_width(800.0);
+    assert_eq!(physics.court_width, 800.0);
+    assert_eq!(physics.blobs[0].pos.x, 200.0);
+    assert_eq!(physics.blobs[1].pos.x, 600.0);
+    assert_eq!(physics.net_x(), 400.0);
+}
+
+#[test]
 fn test_touch_counter_fault_and_dead_ball_physics() {
     let mut logic = GameLogic::new(RuleMode::Modern, 15);
     let mut physics = PhysicWorld::new();
