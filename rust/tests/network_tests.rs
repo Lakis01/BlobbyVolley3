@@ -25,7 +25,7 @@ fn test_packet_serialization() {
 #[test]
 fn test_host_client_communication() {
     let test_port = 19283;
-    let mut host = NetworkHost::bind(test_port, "Tester1", "Copacabana Sunset").expect("Host should bind to test port");
+    let mut host = NetworkHost::bind(test_port, "Tester1", "DE", "Copacabana Sunset").expect("Host should bind to test port");
     let mut client = NetworkClient::new();
 
     client.connect(&format!("127.0.0.1:{}", test_port));
@@ -90,6 +90,7 @@ fn test_lan_discovery_beacon() {
         host: "PlayerTest".to_string(),
         port: 1234,
         arena: "Neo Cyber Stadium".to_string(),
+        country: "DE".to_string(),
     };
 
     let encoded = serde_json::to_vec(&beacon).expect("Beacon serialization must succeed");
@@ -97,6 +98,7 @@ fn test_lan_discovery_beacon() {
     assert_eq!(decoded.name, "Test Arena");
     assert_eq!(decoded.port, 1234);
     assert_eq!(decoded.arena, "Neo Cyber Stadium");
+    assert_eq!(decoded.country, "DE");
 }
 
 #[test]
@@ -107,20 +109,26 @@ fn test_lan_matchmaking_beacon_and_tiebreaker() {
         app: "blobby_volley_3_mm".to_string(),
         player_id: "bv_001_alpha".to_string(),
         name: "Player 1".to_string(),
+        country: "DE".to_string(),
         rating: 1520.0,
         rd: 120.0,
         port: 1234,
         arena_index: 0,
+        elo_range_mode: 1,
+        accepted_opponent_id: None,
     };
 
     let beacon_b = LanMatchmakingBeacon {
         app: "blobby_volley_3_mm".to_string(),
         player_id: "bv_002_bravo".to_string(),
         name: "Player 2".to_string(),
+        country: "US".to_string(),
         rating: 1550.0,
         rd: 95.0,
         port: 1234,
         arena_index: 0,
+        elo_range_mode: 1,
+        accepted_opponent_id: None,
     };
 
     // 1. Serialization integrity
@@ -128,6 +136,7 @@ fn test_lan_matchmaking_beacon_and_tiebreaker() {
     let decoded: LanMatchmakingBeacon = serde_json::from_slice(&encoded).unwrap();
     assert_eq!(decoded.player_id, "bv_001_alpha");
     assert_eq!(decoded.rating, 1520.0);
+    assert_eq!(decoded.country, "DE");
 
     // 2. Skill distance check
     let rating_diff = (beacon_a.rating - beacon_b.rating).abs();
@@ -187,4 +196,100 @@ fn test_leaderboard_inactivity_and_filtering() {
         assert!(month_entries[i - 1].rating >= month_entries[i].rating, "Entries must be sorted by rating descending");
         assert_eq!(month_entries[i].rank, i + 1, "Rank number must match position");
     }
+}
+
+#[test]
+fn test_determine_consensus_arena() {
+    use blobby_core::net::determine_consensus_arena;
+
+    // 1. Commutativity / Symmetry: both players compute identical agreed arena regardless of caller order
+    let res_a = determine_consensus_arena("bv_player_1", 2, "bv_player_2", 5);
+    let res_b = determine_consensus_arena("bv_player_2", 5, "bv_player_1", 2);
+    assert_eq!(res_a, res_b, "Consensus arena must be identical for both players");
+    assert!(res_a == 2 || res_a == 5, "Result must be one of the two competing arenas");
+
+    // 2. Determinism across different player ID pairs
+    for i in 0..10 {
+        let id_a = format!("player_{}", i);
+        let id_b = format!("opponent_{}", i * 7);
+        let arena_a = i % 8;
+        let arena_b = (i + 3) % 8;
+
+        let consensus_ab = determine_consensus_arena(&id_a, arena_a, &id_b, arena_b);
+        let consensus_ba = determine_consensus_arena(&id_b, arena_b, &id_a, arena_a);
+        assert_eq!(consensus_ab, consensus_ba);
+        assert!(consensus_ab == arena_a || consensus_ab == arena_b);
+    }
+}
+
+#[test]
+fn test_elo_tolerance_interval_expansion() {
+    use blobby_core::config::EloSearchRange;
+
+    // Strict (±50)
+    let strict = EloSearchRange::Strict;
+    assert_eq!(strict.initial_tolerance(), 50.0);
+    // Interval 0 (0-4.9s)
+    let tol_0 = strict.initial_tolerance() * (4.0 / 3.0_f64).powi(0);
+    assert_eq!(tol_0, 50.0);
+    // Interval 1 (5s) -> 50 * 4/3 = 66.666
+    let tol_1 = strict.initial_tolerance() * (4.0 / 3.0_f64).powi(1);
+    assert!((tol_1 - 66.666).abs() < 0.01);
+    // Interval 2 (10s) -> 50 * 16/9 = 88.888
+    let tol_2 = strict.initial_tolerance() * (4.0 / 3.0_f64).powi(2);
+    assert!((tol_2 - 88.888).abs() < 0.01);
+
+    // Balanced (±100)
+    let balanced = EloSearchRange::Balanced;
+    assert_eq!(balanced.initial_tolerance(), 100.0);
+    let tol_b1 = balanced.initial_tolerance() * (4.0 / 3.0_f64).powi(1);
+    assert!((tol_b1 - 133.333).abs() < 0.01);
+
+    // Wide (±250)
+    let wide = EloSearchRange::Wide;
+    assert_eq!(wide.initial_tolerance(), 250.0);
+
+    // Unrestricted (Match Any Opponent)
+    let unrestricted = EloSearchRange::Unrestricted;
+    assert_eq!(unrestricted.initial_tolerance(), f64::INFINITY);
+    assert!(10000.0 <= unrestricted.initial_tolerance());
+}
+
+#[test]
+fn test_cross_arena_offer_serialization() {
+    use blobby_core::net::{CrossArenaOffer, ChallengeBroadcast};
+
+    let offer = CrossArenaOffer {
+        opponent_id: "opp_123".to_string(),
+        opponent_name: "Challenger".to_string(),
+        opponent_country: "FR".to_string(),
+        opponent_rating: 1620.0,
+        opponent_rd: 80.0,
+        opponent_arena: 3,
+        my_arena: 1,
+    };
+
+    let json = serde_json::to_string(&offer).unwrap();
+    let decoded: CrossArenaOffer = serde_json::from_str(&json).unwrap();
+    assert_eq!(decoded.opponent_name, "Challenger");
+    assert_eq!(decoded.opponent_country, "FR");
+    assert_eq!(decoded.opponent_arena, 3);
+    assert_eq!(decoded.my_arena, 1);
+
+    let challenge = ChallengeBroadcast {
+        player_id: "p_broadcast".to_string(),
+        name: "ProPlayer".to_string(),
+        country: "JP".to_string(),
+        rating: 1890.0,
+        rd: 60.0,
+        arena_index: 2,
+        arena_name: "Neo Cyber Stadium".to_string(),
+        joined_at: 1700000000,
+    };
+
+    let c_json = serde_json::to_string(&challenge).unwrap();
+    let c_decoded: ChallengeBroadcast = serde_json::from_str(&c_json).unwrap();
+    assert_eq!(c_decoded.name, "ProPlayer");
+    assert_eq!(c_decoded.country, "JP");
+    assert_eq!(c_decoded.arena_name, "Neo Cyber Stadium");
 }

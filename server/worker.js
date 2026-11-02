@@ -22,6 +22,31 @@ export default {
     if (!globalThis.inMemoryRooms) globalThis.inMemoryRooms = new Map();
     if (!globalThis.matchQueue) globalThis.matchQueue = new Map();
     if (!globalThis.activeMatches) globalThis.activeMatches = new Map();
+    if (!globalThis.crossArenaOffers) globalThis.crossArenaOffers = new Map();
+
+    function determineConsensusArena(idA, arenaA, idB, arenaB) {
+      let firstId = idA, firstArena = arenaA, secondId = idB, secondArena = arenaB;
+      if (idA > idB) {
+        firstId = idB; firstArena = arenaB; secondId = idA; secondArena = arenaA;
+      }
+      let sum = 0;
+      const str = firstId + secondId;
+      for (let i = 0; i < str.length; i++) {
+        sum = (sum * 31 + str.charCodeAt(i)) >>> 0;
+      }
+      return sum % 2 === 0 ? firstArena : secondArena;
+    }
+
+    const arenaNames = [
+      "Copacabana Sunset",
+      "Blobby Grand Arena (Stadium)",
+      "Neo Cyber Stadium",
+      "Olympic Beach Stadium",
+      "Classic Beach HD",
+      "Alpine Peaks (Snow)",
+      "Magma Caldera (Volcano)",
+      "Orbital Station (Space)",
+    ];
     if (!globalThis.leaderboard) {
       globalThis.leaderboard = new Map();
       const nowMs = Date.now();
@@ -60,9 +85,13 @@ export default {
         const body = await request.json();
         const playerId = body.player_id;
         const name = body.name || 'Player';
+        const country = body.country || '';
         const rating = Number(body.rating) || 1500.0;
         const rd = Number(body.rd) || 350.0;
+        const arenaIndex = Number(body.arena_index) || 0;
+        const eloRangeMode = Number(body.elo_range_mode) || 1; // 0=Strict, 1=Balanced, 2=Wide, 3=Unrestricted
         const endpoint = body.endpoint || '';
+        const acceptedCrossId = body.accepted_cross_arena_id || null;
 
         if (!playerId) {
           return new Response(JSON.stringify({ error: 'Missing player_id' }), { status: 400, headers: corsHeaders });
@@ -71,41 +100,82 @@ export default {
         // Check if player is already matched
         if (globalThis.activeMatches.has(playerId)) {
           const match = globalThis.activeMatches.get(playerId);
+          globalThis.activeMatches.delete(playerId);
           return new Response(JSON.stringify({ status: 'matched', match }), { headers: corsHeaders });
         }
 
         // Search the queue for an opponent of similar skill
         let bestOpponent = null;
         let minRatingDiff = Infinity;
+        let pendingCrossOffer = null;
 
         for (const [otherId, other] of globalThis.matchQueue.entries()) {
           if (otherId === playerId) continue;
 
           const diff = Math.abs(rating - other.rating);
-          // Tolerance window starts at +/- 100 rating points and expands by 25 points every 5 seconds waiting
+          // Tolerance window starts at base and expands by +1/3 compounding every 5 seconds
           const waitSeconds = Math.floor((now - other.joined_at) / 1000);
-          const allowedDiff = 100 + Math.floor(waitSeconds / 5) * 25;
+          const intervals = Math.floor(waitSeconds / 5);
 
-          if (diff <= allowedDiff && diff < minRatingDiff) {
-            minRatingDiff = diff;
-            bestOpponent = other;
+          const getBase = (mode) => mode === 0 ? 50 : (mode === 2 ? 250 : (mode === 3 ? Infinity : 100));
+          const myBase = getBase(eloRangeMode);
+          const otherBase = getBase(other.elo_range_mode);
+
+          const allowedDiff = (myBase === Infinity || otherBase === Infinity)
+            ? Infinity
+            : Math.round(Math.max(myBase, otherBase) * Math.pow(4 / 3, intervals));
+
+          if (diff <= allowedDiff) {
+            const mutualAccept = (acceptedCrossId === other.player_id) || (other.accepted_cross_arena_id === playerId);
+            if (other.arena_index === arenaIndex || mutualAccept) {
+              if (diff < minRatingDiff) {
+                minRatingDiff = diff;
+                bestOpponent = other;
+              }
+            } else if (!pendingCrossOffer) {
+              pendingCrossOffer = {
+                opponent_id: other.player_id,
+                opponent_name: other.name,
+                opponent_country: other.country || '',
+                opponent_rating: other.rating,
+                opponent_rd: other.rd,
+                opponent_arena: other.arena_index,
+              };
+            }
           }
         }
 
         // Opponent found! Form a match
         if (bestOpponent) {
           globalThis.matchQueue.delete(bestOpponent.player_id);
+          globalThis.matchQueue.delete(playerId);
+          globalThis.crossArenaOffers.delete(bestOpponent.player_id);
+          globalThis.crossArenaOffers.delete(playerId);
+
+          let agreedArena = arenaIndex;
+          if (bestOpponent.arena_index === arenaIndex) {
+            agreedArena = arenaIndex;
+          } else if (acceptedCrossId === bestOpponent.player_id && bestOpponent.accepted_cross_arena_id === playerId) {
+            // Both accepted to switch! Smart deterministic consensus
+            agreedArena = determineConsensusArena(playerId, arenaIndex, bestOpponent.player_id, bestOpponent.arena_index);
+          } else if (acceptedCrossId === bestOpponent.player_id) {
+            agreedArena = bestOpponent.arena_index;
+          } else {
+            agreedArena = arenaIndex;
+          }
 
           // Deterministic role assignment: the one with verified endpoint or waiting longer hosts
-          const hostPlayer = bestOpponent.endpoint ? bestOpponent : { player_id: playerId, name, rating, rd, endpoint };
-          const clientPlayer = hostPlayer.player_id === playerId ? bestOpponent : { player_id: playerId, name, rating, rd, endpoint };
+          const hostPlayer = bestOpponent.endpoint ? bestOpponent : { player_id: playerId, name, country, rating, rd, endpoint };
+          const clientPlayer = hostPlayer.player_id === playerId ? bestOpponent : { player_id: playerId, name, country, rating, rd, endpoint };
 
           const matchForHost = {
             match_id: `match_${now}`,
             role: 'host',
             opponent_name: clientPlayer.name,
+            opponent_country: clientPlayer.country || '',
             opponent_rating: clientPlayer.rating,
             opponent_rd: clientPlayer.rd,
+            agreed_arena: agreedArena,
             connect_to: hostPlayer.endpoint,
           };
 
@@ -113,8 +183,10 @@ export default {
             match_id: `match_${now}`,
             role: 'client',
             opponent_name: hostPlayer.name,
+            opponent_country: hostPlayer.country || '',
             opponent_rating: hostPlayer.rating,
             opponent_rd: hostPlayer.rd,
+            agreed_arena: agreedArena,
             connect_to: hostPlayer.endpoint,
           };
 
@@ -129,11 +201,20 @@ export default {
         globalThis.matchQueue.set(playerId, {
           player_id: playerId,
           name,
+          country,
           rating,
           rd,
+          arena_index: arenaIndex,
+          elo_range_mode: eloRangeMode,
+          accepted_cross_arena_id: acceptedCrossId,
           endpoint,
           joined_at: now,
         });
+
+        if (pendingCrossOffer) {
+          globalThis.crossArenaOffers.set(playerId, pendingCrossOffer);
+          return new Response(JSON.stringify({ status: 'cross_arena_offer', offer: pendingCrossOffer }), { headers: corsHeaders });
+        }
 
         return new Response(JSON.stringify({ status: 'queued', position: globalThis.matchQueue.size }), { headers: corsHeaders });
       } catch (err) {
@@ -146,22 +227,48 @@ export default {
       const playerId = url.searchParams.get('player_id');
       if (globalThis.activeMatches.has(playerId)) {
         const match = globalThis.activeMatches.get(playerId);
-        // Remove from matches map after polling
         globalThis.activeMatches.delete(playerId);
         return new Response(JSON.stringify({ status: 'matched', match }), { headers: corsHeaders });
+      }
+
+      if (globalThis.crossArenaOffers.has(playerId)) {
+        const offer = globalThis.crossArenaOffers.get(playerId);
+        return new Response(JSON.stringify({ status: 'cross_arena_offer', offer }), { headers: corsHeaders });
       }
 
       if (globalThis.matchQueue.has(playerId)) {
         const entry = globalThis.matchQueue.get(playerId);
         const waitSec = Math.floor((now - entry.joined_at) / 1000);
+        const intervals = Math.floor(waitSec / 5);
+        const getBase = (mode) => mode === 0 ? 50 : (mode === 2 ? 250 : (mode === 3 ? Infinity : 100));
+        const initialTol = getBase(entry.elo_range_mode);
+        const currentTol = initialTol === Infinity ? Infinity : Math.round(initialTol * Math.pow(4 / 3, intervals));
         return new Response(JSON.stringify({
           status: 'searching',
           elapsed_seconds: waitSec,
-          current_window: 100 + Math.floor(waitSec / 5) * 25,
+          current_window: currentTol,
         }), { headers: corsHeaders });
       }
 
       return new Response(JSON.stringify({ status: 'idle' }), { headers: corsHeaders });
+    }
+
+    // GET /challenges: Broadcast pool of active online challenges
+    if (url.pathname === '/challenges' && request.method === 'GET') {
+      const challenges = [];
+      for (const entry of globalThis.matchQueue.values()) {
+        challenges.push({
+          player_id: entry.player_id,
+          name: entry.name,
+          country: entry.country || '',
+          rating: entry.rating,
+          rd: entry.rd,
+          arena_index: entry.arena_index,
+          arena_name: arenaNames[entry.arena_index] || 'Arena',
+          joined_at: entry.joined_at,
+        });
+      }
+      return new Response(JSON.stringify(challenges), { headers: corsHeaders });
     }
 
     // DELETE /matchmaking/cancel: Leave queue

@@ -5,6 +5,7 @@ use std::time::Duration;
 use serde::{Deserialize, Serialize};
 use crate::physics::{PhysicWorld, PlayerInput, MatchEvent};
 use crate::rules::GameLogic;
+use crate::config::EloSearchRange;
 
 pub const DEFAULT_PORT: u16 = 1234;
 pub const LAN_DISCOVERY_PORT: u16 = 1235;
@@ -58,6 +59,8 @@ pub struct LanRoomBeacon {
     pub host: String,
     pub port: u16,
     pub arena: String,
+    #[serde(default)]
+    pub country: String,
 }
 
 pub struct NetworkHost {
@@ -69,6 +72,7 @@ pub struct NetworkHost {
     pub new_chat_messages: Vec<(String, String)>,
     pub room_name: String,
     pub host_name: String,
+    pub country: String,
     pub arena_name: String,
     pub port: u16,
     pub local_ip: String,
@@ -78,7 +82,7 @@ pub struct NetworkHost {
 }
 
 impl NetworkHost {
-    pub fn bind(port: u16, host_name: &str, arena_name: &str) -> std::io::Result<Self> {
+    pub fn bind(port: u16, host_name: &str, country: &str, arena_name: &str) -> std::io::Result<Self> {
         let listener = TcpListener::bind(format!("0.0.0.0:{}", port))?;
         listener.set_nonblocking(true)?;
 
@@ -103,6 +107,7 @@ impl NetworkHost {
             new_chat_messages: Vec::new(),
             room_name: format!("{}'s Match", host_name),
             host_name: host_name.to_string(),
+            country: country.to_string(),
             arena_name: arena_name.to_string(),
             port,
             local_ip,
@@ -145,6 +150,7 @@ impl NetworkHost {
                         host: self.host_name.clone(),
                         port: self.port,
                         arena: self.arena_name.clone(),
+                        country: self.country.clone(),
                     };
                     if let Ok(json) = serde_json::to_vec(&beacon) {
                         let _ = sock.send_to(&json, format!("255.255.255.255:{}", LAN_DISCOVERY_PORT));
@@ -463,8 +469,13 @@ impl LanDiscoveryListener {
             while let Ok((len, src_addr)) = socket.recv_from(&mut buf) {
                 if let Ok(beacon) = serde_json::from_slice::<LanRoomBeacon>(&buf[..len]) {
                     if beacon.app == "blobby_volley_3" {
+                        let display_name = if beacon.country.is_empty() {
+                            format!("{} ({})", beacon.name, beacon.arena)
+                        } else {
+                            format!("[{}] {} ({})", beacon.country, beacon.name, beacon.arena)
+                        };
                         rooms.push(ServerEntry {
-                            name: format!("{} ({})", beacon.name, beacon.arena),
+                            name: display_name,
                             host: src_addr.ip().to_string(),
                             port: beacon.port,
                             server_type: "LAN Room (Auto-Discovered)".to_string(),
@@ -569,43 +580,121 @@ pub fn query_master_server() -> Vec<ServerEntry> {
     list
 }
 
+/// Deterministic consensus algorithm to resolve simultaneous arena switch race condition.
+/// Both clients computing this will ALWAYS resolve to the exact same arena index.
+pub fn determine_consensus_arena(id_a: &str, arena_a: usize, id_b: &str, arena_b: usize) -> usize {
+    let (first_id, first_arena, second_id, second_arena) = if id_a <= id_b {
+        (id_a, arena_a, id_b, arena_b)
+    } else {
+        (id_b, arena_b, id_a, arena_a)
+    };
+    let mut sum: u32 = 0;
+    for b in first_id.bytes().chain(second_id.bytes()) {
+        sum = sum.wrapping_mul(31).wrapping_add(b as u32);
+    }
+    if sum % 2 == 0 {
+        first_arena
+    } else {
+        second_arena
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct CrossArenaOffer {
+    pub opponent_id: String,
+    pub opponent_name: String,
+    #[serde(default)]
+    pub opponent_country: String,
+    pub opponent_rating: f64,
+    pub opponent_rd: f64,
+    pub opponent_arena: usize,
+    pub my_arena: usize,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ChallengeBroadcast {
+    pub player_id: String,
+    pub name: String,
+    #[serde(default)]
+    pub country: String,
+    pub rating: f64,
+    pub rd: f64,
+    pub arena_index: usize,
+    pub arena_name: String,
+    #[serde(default)]
+    pub joined_at: u64,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LanMatchmakingBeacon {
     pub app: String,
     pub player_id: String,
     pub name: String,
+    #[serde(default)]
+    pub country: String,
     pub rating: f64,
     pub rd: f64,
     pub port: u16,
     pub arena_index: usize,
+    #[serde(default = "crate::config::default_elo_range")]
+    pub elo_range_mode: usize,
+    #[serde(default)]
+    pub accepted_opponent_id: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum MatchmakingStatus {
-    Searching { elapsed_sec: f32, current_tolerance: f64 },
-    MatchedAsHost { opponent_name: String, opponent_rating: f64, opponent_rd: f64 },
-    MatchedAsClient { target_addr: String, opponent_name: String, opponent_rating: f64, opponent_rd: f64 },
+    Searching {
+        elapsed_sec: f32,
+        current_tolerance: f64,
+        elo_range_mode: usize,
+        current_arena: usize,
+    },
+    CrossArenaOfferReceived(CrossArenaOffer),
+    MatchedAsHost {
+        opponent_name: String,
+        opponent_country: String,
+        opponent_rating: f64,
+        opponent_rd: f64,
+        agreed_arena: usize,
+    },
+    MatchedAsClient {
+        target_addr: String,
+        opponent_name: String,
+        opponent_country: String,
+        opponent_rating: f64,
+        opponent_rd: f64,
+        agreed_arena: usize,
+    },
 }
 
 pub struct QuickMatchAgent {
     pub player_id: String,
     pub player_name: String,
+    pub country_code: String,
     pub rating: f64,
     pub rd: f64,
     pub arena_index: usize,
+    pub elo_range: EloSearchRange,
     pub search_start_time: f32,
     pub last_beacon_time: f32,
     pub coordinator_url: Option<String>,
     pub last_http_poll_time: f32,
+    pub last_challenges_poll_time: f32,
+    pub active_offer: Option<CrossArenaOffer>,
+    pub accepted_cross_id: Option<String>,
+    pub active_challenges: Vec<ChallengeBroadcast>,
     socket: Option<UdpSocket>,
 }
 
 impl QuickMatchAgent {
     pub fn new(
         player_name: &str,
+        country_code: &str,
         rating: f64,
         rd: f64,
         arena_index: usize,
+        elo_range_idx: usize,
         coordinator_url: Option<String>,
         start_time: f32,
     ) -> Self {
@@ -637,21 +726,55 @@ impl QuickMatchAgent {
         Self {
             player_id,
             player_name: player_name.to_string(),
+            country_code: country_code.to_string(),
             rating,
             rd,
             arena_index,
+            elo_range: EloSearchRange::from_index(elo_range_idx),
             search_start_time: start_time,
             last_beacon_time: -10.0,
             coordinator_url,
             last_http_poll_time: -10.0,
+            last_challenges_poll_time: -10.0,
+            active_offer: None,
+            accepted_cross_id: None,
+            active_challenges: Vec::new(),
             socket: bound_socket,
         }
     }
 
+    pub fn cycle_elo_range(&mut self) -> EloSearchRange {
+        self.elo_range = self.elo_range.next();
+        self.elo_range
+    }
+
+    pub fn cycle_arena(&mut self, next: bool) -> usize {
+        let total = 8;
+        if next {
+            self.arena_index = (self.arena_index + 1) % total;
+        } else {
+            self.arena_index = (self.arena_index + total - 1) % total;
+        }
+        self.arena_index
+    }
+
+    pub fn accept_cross_arena(&mut self, opponent_id: &str) {
+        self.accepted_cross_id = Some(opponent_id.to_string());
+    }
+
+    pub fn decline_cross_arena(&mut self) {
+        self.active_offer = None;
+    }
+
     pub fn poll(&mut self, current_time: f32) -> MatchmakingStatus {
         let elapsed = (current_time - self.search_start_time).max(0.0) as f64;
-        // Matching tolerance window: starts at +/- 100 and widens by 25 points every 5 seconds in queue
-        let tolerance = 100.0 + (elapsed / 5.0).floor() * 25.0;
+        let intervals = (elapsed / 5.0).floor() as i32;
+
+        let tolerance = if self.elo_range == EloSearchRange::Unrestricted {
+            f64::INFINITY
+        } else {
+            self.elo_range.initial_tolerance() * (4.0 / 3.0_f64).powi(intervals)
+        };
 
         // 1. Broadcast LAN matchmaking beacon every 0.6 seconds
         if current_time - self.last_beacon_time >= 0.6 {
@@ -661,10 +784,13 @@ impl QuickMatchAgent {
                     app: "blobby_volley_3_mm".to_string(),
                     player_id: self.player_id.clone(),
                     name: self.player_name.clone(),
+                    country: self.country_code.clone(),
                     rating: self.rating,
                     rd: self.rd,
                     port: DEFAULT_PORT,
                     arena_index: self.arena_index,
+                    elo_range_mode: self.elo_range.to_index(),
+                    accepted_opponent_id: self.accepted_cross_id.clone(),
                 };
                 if let Ok(payload) = serde_json::to_vec(&beacon) {
                     let _ = sock.send_to(&payload, format!("255.255.255.255:{}", LAN_DISCOVERY_PORT));
@@ -681,24 +807,44 @@ impl QuickMatchAgent {
             while let Ok((len, src_addr)) = sock.recv_from(&mut buf) {
                 if let Ok(beacon) = serde_json::from_slice::<LanMatchmakingBeacon>(&buf[..len]) {
                     if beacon.app == "blobby_volley_3_mm" && beacon.player_id != self.player_id {
+                        let opp_range = EloSearchRange::from_index(beacon.elo_range_mode);
+                        let opp_tol = if opp_range == EloSearchRange::Unrestricted {
+                            f64::INFINITY
+                        } else {
+                            opp_range.initial_tolerance() * (4.0 / 3.0_f64).powi(intervals)
+                        };
+                        let effective_tol = tolerance.max(opp_tol);
                         let diff = (self.rating - beacon.rating).abs();
-                        if diff <= tolerance {
-                            // Valid skill match found! Deterministic tie-breaker assigns Host vs Client
-                            if self.player_id < beacon.player_id {
-                                return MatchmakingStatus::MatchedAsHost {
-                                    opponent_name: beacon.name,
-                                    opponent_rating: beacon.rating,
-                                    opponent_rd: beacon.rd,
-                                };
+
+                        if diff <= effective_tol {
+                            if self.arena_index == beacon.arena_index {
+                                return self.create_match(&beacon, self.arena_index, src_addr.ip().to_string());
                             } else {
-                                let target_ip = src_addr.ip().to_string();
-                                let target_addr = format!("{}:{}", target_ip, beacon.port);
-                                return MatchmakingStatus::MatchedAsClient {
-                                    target_addr,
-                                    opponent_name: beacon.name,
-                                    opponent_rating: beacon.rating,
-                                    opponent_rd: beacon.rd,
-                                };
+                                if self.accepted_cross_id.as_deref() == Some(&beacon.player_id)
+                                    && beacon.accepted_opponent_id.as_deref() == Some(&self.player_id)
+                                {
+                                    let agreed_arena = determine_consensus_arena(
+                                        &self.player_id,
+                                        self.arena_index,
+                                        &beacon.player_id,
+                                        beacon.arena_index,
+                                    );
+                                    return self.create_match(&beacon, agreed_arena, src_addr.ip().to_string());
+                                } else if self.accepted_cross_id.as_deref() == Some(&beacon.player_id) {
+                                    // Already accepted, waiting for opponent
+                                } else {
+                                    let offer = CrossArenaOffer {
+                                        opponent_id: beacon.player_id.clone(),
+                                        opponent_name: beacon.name.clone(),
+                                        opponent_country: beacon.country.clone(),
+                                        opponent_rating: beacon.rating,
+                                        opponent_rd: beacon.rd,
+                                        opponent_arena: beacon.arena_index,
+                                        my_arena: self.arena_index,
+                                    };
+                                    self.active_offer = Some(offer.clone());
+                                    return MatchmakingStatus::CrossArenaOfferReceived(offer);
+                                }
                             }
                         }
                     }
@@ -708,17 +854,74 @@ impl QuickMatchAgent {
 
         // 3. Poll HTTP serverless coordinator if configured
         if let Some(ref url) = self.coordinator_url {
-            if current_time - self.last_http_poll_time >= 2.0 {
+            if current_time - self.last_http_poll_time >= 1.5 {
                 self.last_http_poll_time = current_time;
-                if let Some(res) = poll_http_coordinator(url, &self.player_id, &self.player_name, self.rating, self.rd) {
-                    return res;
+                if let Some(status) = poll_http_coordinator(
+                    url,
+                    &self.player_id,
+                    &self.player_name,
+                    &self.country_code,
+                    self.rating,
+                    self.rd,
+                    self.arena_index,
+                    self.elo_range.to_index(),
+                    self.accepted_cross_id.as_deref(),
+                ) {
+                    match status {
+                        MatchmakingStatus::CrossArenaOfferReceived(ref offer) => {
+                            self.active_offer = Some(offer.clone());
+                            return status;
+                        }
+                        MatchmakingStatus::MatchedAsHost { .. } | MatchmakingStatus::MatchedAsClient { .. } => {
+                            return status;
+                        }
+                        _ => {}
+                    }
                 }
             }
+
+            if current_time - self.last_challenges_poll_time >= 3.0 {
+                self.last_challenges_poll_time = current_time;
+                self.active_challenges = fetch_challenges(url);
+            }
+        }
+
+        if let Some(ref offer) = self.active_offer {
+            return MatchmakingStatus::CrossArenaOfferReceived(offer.clone());
         }
 
         MatchmakingStatus::Searching {
             elapsed_sec: elapsed as f32,
             current_tolerance: tolerance,
+            elo_range_mode: self.elo_range.to_index(),
+            current_arena: self.arena_index,
+        }
+    }
+
+    fn create_match(
+        &self,
+        beacon: &LanMatchmakingBeacon,
+        agreed_arena: usize,
+        src_ip: String,
+    ) -> MatchmakingStatus {
+        if self.player_id < beacon.player_id {
+            MatchmakingStatus::MatchedAsHost {
+                opponent_name: beacon.name.clone(),
+                opponent_country: beacon.country.clone(),
+                opponent_rating: beacon.rating,
+                opponent_rd: beacon.rd,
+                agreed_arena,
+            }
+        } else {
+            let target_addr = format!("{}:{}", src_ip, beacon.port);
+            MatchmakingStatus::MatchedAsClient {
+                target_addr,
+                opponent_name: beacon.name.clone(),
+                opponent_country: beacon.country.clone(),
+                opponent_rating: beacon.rating,
+                opponent_rd: beacon.rd,
+                agreed_arena,
+            }
         }
     }
 
@@ -760,8 +963,12 @@ fn poll_http_coordinator(
     base_url: &str,
     player_id: &str,
     name: &str,
+    country: &str,
     rating: f64,
     rd: f64,
+    arena_index: usize,
+    elo_range_mode: usize,
+    accepted_cross_id: Option<&str>,
 ) -> Option<MatchmakingStatus> {
     let simple = parse_simple_url(base_url)?;
     let addr = format!("{}:{}", simple.host, simple.port);
@@ -773,8 +980,15 @@ fn poll_http_coordinator(
     let _ = stream.set_write_timeout(Some(Duration::from_millis(400)));
 
     let body = format!(
-        r#"{{"player_id":"{}","name":"{}","rating":{},"rd":{}}}"#,
-        player_id, name, rating, rd
+        r#"{{"player_id":"{}","name":"{}","country":"{}","rating":{},"rd":{},"arena_index":{},"elo_range_mode":{},"accepted_cross_arena_id":{}}}"#,
+        player_id,
+        name,
+        country,
+        rating,
+        rd,
+        arena_index,
+        elo_range_mode,
+        accepted_cross_id.map_or("null".to_string(), |id| format!("\"{}\"", id))
     );
     let req = format!(
         "POST /matchmaking/queue HTTP/1.1\r\nHost: {}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
@@ -789,33 +1003,75 @@ fn poll_http_coordinator(
     if let Some(json_start) = resp.find("\r\n\r\n") {
         let json_body = &resp[json_start + 4..];
         if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(json_body) {
-            if parsed.get("status").and_then(|v| v.as_str()) == Some("matched") {
+            let status = parsed.get("status").and_then(|v| v.as_str());
+            if status == Some("matched") {
                 if let Some(m) = parsed.get("match") {
                     let role = m.get("role").and_then(|v| v.as_str()).unwrap_or("client");
                     let opp_name = m.get("opponent_name").and_then(|v| v.as_str()).unwrap_or("Opponent").to_string();
+                    let opp_country = m.get("opponent_country").and_then(|v| v.as_str()).unwrap_or("").to_string();
                     let opp_r = m.get("opponent_rating").and_then(|v| v.as_f64()).unwrap_or(1500.0);
                     let opp_rd = m.get("opponent_rd").and_then(|v| v.as_f64()).unwrap_or(350.0);
+                    let agreed_arena = m.get("agreed_arena").and_then(|v| v.as_u64()).unwrap_or(arena_index as u64) as usize;
                     let connect_to = m.get("connect_to").and_then(|v| v.as_str()).unwrap_or("127.0.0.1:1234").to_string();
 
                     if role == "host" {
                         return Some(MatchmakingStatus::MatchedAsHost {
                             opponent_name: opp_name,
+                            opponent_country: opp_country,
                             opponent_rating: opp_r,
                             opponent_rd: opp_rd,
+                            agreed_arena,
                         });
                     } else {
                         return Some(MatchmakingStatus::MatchedAsClient {
                             target_addr: connect_to,
                             opponent_name: opp_name,
+                            opponent_country: opp_country,
                             opponent_rating: opp_r,
                             opponent_rd: opp_rd,
+                            agreed_arena,
                         });
+                    }
+                }
+            } else if status == Some("cross_arena_offer") {
+                if let Some(o) = parsed.get("offer") {
+                    if let Ok(offer) = serde_json::from_value::<CrossArenaOffer>(o.clone()) {
+                        return Some(MatchmakingStatus::CrossArenaOfferReceived(offer));
                     }
                 }
             }
         }
     }
     None
+}
+
+pub fn fetch_challenges(base_url: &str) -> Vec<ChallengeBroadcast> {
+    if let Some(simple) = parse_simple_url(base_url) {
+        let addr = format!("{}:{}", simple.host, simple.port);
+        if let Ok(mut addrs) = addr.to_socket_addrs() {
+            if let Some(sa) = addrs.next() {
+                if let Ok(mut stream) = TcpStream::connect_timeout(&sa, Duration::from_millis(400)) {
+                    let _ = stream.set_read_timeout(Some(Duration::from_millis(400)));
+                    let req = format!(
+                        "GET /challenges HTTP/1.1\r\nHost: {}\r\nConnection: close\r\n\r\n",
+                        simple.host
+                    );
+                    if stream.write_all(req.as_bytes()).is_ok() {
+                        let mut resp = String::new();
+                        if stream.read_to_string(&mut resp).is_ok() {
+                            if let Some(json_idx) = resp.find("\r\n\r\n") {
+                                let json = &resp[json_idx + 4..];
+                                if let Ok(list) = serde_json::from_str::<Vec<ChallengeBroadcast>>(json) {
+                                    return list;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    Vec::new()
 }
 
 fn cancel_http_coordinator(base_url: &str, player_id: &str) {

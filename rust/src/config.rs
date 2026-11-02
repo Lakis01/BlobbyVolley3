@@ -24,6 +24,123 @@ pub struct UserConfig {
     pub matches_won: u32,
     #[serde(default)]
     pub matches_played: u32,
+    #[serde(default)]
+    pub country_code: String,
+    #[serde(default = "default_elo_range")]
+    pub elo_search_range: usize,
+}
+
+pub fn default_elo_range() -> usize {
+    1 // Balanced (±100)
+}
+
+pub const AVAILABLE_COUNTRIES: &[(&str, &str)] = &[
+    ("", "Global (None)"),
+    ("DE", "Germany (DE)"),
+    ("US", "United States (US)"),
+    ("GB", "United Kingdom (GB)"),
+    ("FR", "France (FR)"),
+    ("BR", "Brazil (BR)"),
+    ("JP", "Japan (JP)"),
+    ("CA", "Canada (CA)"),
+    ("IT", "Italy (IT)"),
+    ("ES", "Spain (ES)"),
+    ("PL", "Poland (PL)"),
+    ("SE", "Sweden (SE)"),
+    ("NO", "Norway (NO)"),
+    ("FI", "Finland (FI)"),
+    ("NL", "Netherlands (NL)"),
+    ("AT", "Austria (AT)"),
+    ("CH", "Switzerland (CH)"),
+    ("AU", "Australia (AU)"),
+    ("KR", "South Korea (KR)"),
+    ("CZ", "Czechia (CZ)"),
+    ("UA", "Ukraine (UA)"),
+    ("AR", "Argentina (AR)"),
+];
+
+pub fn country_index(code: &str) -> usize {
+    AVAILABLE_COUNTRIES.iter().position(|&(c, _)| c == code).unwrap_or(0)
+}
+
+pub fn country_code_at(idx: usize) -> &'static str {
+    AVAILABLE_COUNTRIES[idx % AVAILABLE_COUNTRIES.len()].0
+}
+
+pub fn country_display(code: &str) -> &'static str {
+    AVAILABLE_COUNTRIES.iter().find(|&&(c, _)| c == code).map(|&(_, name)| name).unwrap_or("Global (None)")
+}
+
+pub fn country_badge(code: &str) -> String {
+    if code.is_empty() {
+        "🌐".to_string()
+    } else {
+        format!("[{}]", code)
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum EloSearchRange {
+    Strict,       // ±50
+    Balanced,     // ±100
+    Wide,         // ±250
+    Unrestricted, // Match Any Available Opponent
+}
+
+impl EloSearchRange {
+    pub fn name(self) -> &'static str {
+        match self {
+            EloSearchRange::Strict => "Strict (±50)",
+            EloSearchRange::Balanced => "Balanced (±100)",
+            EloSearchRange::Wide => "Wide (±250)",
+            EloSearchRange::Unrestricted => "Unrestricted (Any Elo)",
+        }
+    }
+
+    pub fn initial_tolerance(self) -> f64 {
+        match self {
+            EloSearchRange::Strict => 50.0,
+            EloSearchRange::Balanced => 100.0,
+            EloSearchRange::Wide => 250.0,
+            EloSearchRange::Unrestricted => f64::INFINITY,
+        }
+    }
+
+    pub fn from_index(idx: usize) -> Self {
+        match idx {
+            0 => EloSearchRange::Strict,
+            1 => EloSearchRange::Balanced,
+            2 => EloSearchRange::Wide,
+            _ => EloSearchRange::Unrestricted,
+        }
+    }
+
+    pub fn to_index(self) -> usize {
+        match self {
+            EloSearchRange::Strict => 0,
+            EloSearchRange::Balanced => 1,
+            EloSearchRange::Wide => 2,
+            EloSearchRange::Unrestricted => 3,
+        }
+    }
+
+    pub fn next(self) -> Self {
+        match self {
+            EloSearchRange::Strict => EloSearchRange::Balanced,
+            EloSearchRange::Balanced => EloSearchRange::Wide,
+            EloSearchRange::Wide => EloSearchRange::Unrestricted,
+            EloSearchRange::Unrestricted => EloSearchRange::Strict,
+        }
+    }
+
+    pub fn prev(self) -> Self {
+        match self {
+            EloSearchRange::Strict => EloSearchRange::Unrestricted,
+            EloSearchRange::Balanced => EloSearchRange::Strict,
+            EloSearchRange::Wide => EloSearchRange::Balanced,
+            EloSearchRange::Unrestricted => EloSearchRange::Wide,
+        }
+    }
 }
 
 impl Default for UserConfig {
@@ -48,6 +165,8 @@ impl Default for UserConfig {
             glicko: GlickoRating::default(),
             matches_won: 0,
             matches_played: 0,
+            country_code: "".to_string(),
+            elo_search_range: 1, // Balanced (±100)
         }
     }
 }

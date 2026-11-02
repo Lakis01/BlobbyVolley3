@@ -6,7 +6,8 @@ use crate::render::blob::BlobTheme;
 use crate::ai::AiDifficulty;
 use crate::render::arenas::ArenaType;
 use crate::constants::*;
-use crate::net::{ServerEntry, LeaderboardEntry};
+use crate::net::{ServerEntry, LeaderboardEntry, CrossArenaOffer, ChallengeBroadcast};
+use crate::config::{EloSearchRange, country_badge, country_display};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum GameMode {
@@ -72,12 +73,12 @@ pub struct MenuRowLayout {
 pub fn get_main_menu_layout() -> Vec<MenuRowLayout> {
     let card_w = 660.0;
     let card_x = (VIRTUAL_WIDTH - card_w) * 0.5;
-    let card_y = 120.0;
-    let start_y = card_y + 36.0;
-    let row_h = 37.0;
+    let card_y = 115.0;
+    let start_y = card_y + 32.0;
+    let row_h = 35.0;
 
     let mut rows = Vec::new();
-    for i in 0..10 {
+    for i in 0..11 {
         let y = start_y + i as f32 * row_h;
         let row_rect = Rect::new(card_x + 14.0, y - 18.0, card_w - 28.0, 32.0);
 
@@ -197,7 +198,9 @@ pub fn render_hud(
 pub fn render_main_menu(
     game_mode: GameMode,
     player1_name: &str,
+    country_code: &str,
     difficulty: AiDifficulty,
+    elo_range: EloSearchRange,
     rule_mode: RuleMode,
     score_to_win: i32,
     arena: ArenaType,
@@ -233,21 +236,28 @@ pub fn render_main_menu(
 
     // Menu Card
     let card_w = 660.0;
-    let card_h = 425.0;
+    let card_h = 430.0;
     let card_x = (VIRTUAL_WIDTH - card_w) * 0.5;
-    let card_y = 120.0;
+    let card_y = 115.0;
 
     draw_rectangle(card_x, card_y, card_w, card_h, Color::new(0.08, 0.1, 0.18, 0.92));
     draw_rectangle_lines(card_x, card_y, card_w, card_h, 1.5, Color::new(0.3, 0.5, 0.85, 0.5));
 
     let layouts = get_main_menu_layout();
 
+    let profile_display = if country_code.is_empty() {
+        player1_name.to_string()
+    } else {
+        format!("{} {}", country_badge(country_code), player1_name)
+    };
+
     // Data for each row: (Label, Value)
-    let rows_data: [(Option<&'static str>, String); 10] = [
+    let rows_data: [(Option<&'static str>, String); 11] = [
         (None, "START MATCH  [ Press Space / Enter ]".to_string()),
         (Some("Game Mode:"), game_mode.name().to_string()),
-        (Some("Player Profile:"), player1_name.to_string()),
+        (Some("Player Profile:"), profile_display),
         (Some("AI Difficulty:"), difficulty.name().to_string()),
+        (Some("Matchmaking Range:"), elo_range.name().to_string()),
         (Some("Rules:"), rule_mode.name().to_string()),
         (Some("Points to Win:"), format!("{}", score_to_win)),
         (Some("Arena:"), arena.name().to_string()),
@@ -365,6 +375,7 @@ pub fn render_main_menu(
 
 pub fn render_player_setup(
     p1_name: &str,
+    country_code: &str,
     p2_name: &str,
     is_two_player: bool,
     active_field: usize,
@@ -373,7 +384,7 @@ pub fn render_player_setup(
     draw_rectangle(0.0, 0.0, VIRTUAL_WIDTH, VIRTUAL_HEIGHT, Color::new(0.04, 0.05, 0.1, 0.85));
 
     let card_w = 560.0;
-    let card_h = if is_two_player { 340.0 } else { 290.0 };
+    let card_h = if is_two_player { 390.0 } else { 330.0 };
     let card_x = (VIRTUAL_WIDTH - card_w) * 0.5;
     let card_y = (VIRTUAL_HEIGHT - card_h) * 0.5;
 
@@ -382,41 +393,63 @@ pub fn render_player_setup(
 
     let title = "PLAYER PROFILE & IDENTITY";
     let title_dim = measure_text(title, None, 30, 1.0);
-    draw_text(title, (VIRTUAL_WIDTH - title_dim.width) * 0.5, card_y + 44.0, 30.0, Color::new(0.3, 0.9, 1.0, 1.0));
+    draw_text(title, (VIRTUAL_WIDTH - title_dim.width) * 0.5, card_y + 42.0, 30.0, Color::new(0.3, 0.9, 1.0, 1.0));
 
-    let sub = "Display names are saved across sessions for local and online play";
+    let sub = "Display names and country flags are saved for local & online play";
     let sub_dim = measure_text(sub, None, 14, 1.0);
-    draw_text(sub, (VIRTUAL_WIDTH - sub_dim.width) * 0.5, card_y + 70.0, 14.0, Color::new(0.75, 0.8, 0.9, 0.8));
+    draw_text(sub, (VIRTUAL_WIDTH - sub_dim.width) * 0.5, card_y + 68.0, 14.0, Color::new(0.75, 0.8, 0.9, 0.8));
 
     let cursor = if (time * 3.5) as i32 % 2 == 0 { "_" } else { "" };
 
     // Field 0: Player 1 Name
-    let f0_y = card_y + 115.0;
-    draw_text("Player 1 Name:", card_x + 40.0, f0_y - 8.0, 18.0, WHITE);
-    let box0_rect = Rect::new(card_x + 40.0, f0_y, card_w - 80.0, 38.0);
+    let f0_y = card_y + 110.0;
+    draw_text("Player 1 Name:", card_x + 40.0, f0_y - 8.0, 17.0, WHITE);
+    let box0_rect = Rect::new(card_x + 40.0, f0_y, card_w - 80.0, 36.0);
     draw_rectangle(box0_rect.x, box0_rect.y, box0_rect.w, box0_rect.h, Color::new(0.05, 0.08, 0.14, 0.95));
     let f0_border = if active_field == 0 { Color::new(0.2, 0.9, 1.0, 1.0) } else { Color::new(0.3, 0.45, 0.65, 0.6) };
     draw_rectangle_lines(box0_rect.x, box0_rect.y, box0_rect.w, box0_rect.h, 1.5, f0_border);
     let f0_text = if active_field == 0 { format!("{}{}", p1_name, cursor) } else { p1_name.to_string() };
-    draw_text(&f0_text, box0_rect.x + 12.0, box0_rect.y + 26.0, 20.0, Color::new(1.0, 0.95, 0.35, 1.0));
+    draw_text(&f0_text, box0_rect.x + 12.0, box0_rect.y + 25.0, 20.0, Color::new(1.0, 0.95, 0.35, 1.0));
+
+    let mut next_y = f0_y + 68.0;
 
     // Field 1: Player 2 Name (only if 2-player mode)
     if is_two_player {
-        let f1_y = card_y + 190.0;
-        draw_text("Player 2 Name:", card_x + 40.0, f1_y - 8.0, 18.0, WHITE);
-        let box1_rect = Rect::new(card_x + 40.0, f1_y, card_w - 80.0, 38.0);
+        let f1_y = next_y;
+        draw_text("Player 2 Name:", card_x + 40.0, f1_y - 8.0, 17.0, WHITE);
+        let box1_rect = Rect::new(card_x + 40.0, f1_y, card_w - 80.0, 36.0);
         draw_rectangle(box1_rect.x, box1_rect.y, box1_rect.w, box1_rect.h, Color::new(0.05, 0.08, 0.14, 0.95));
         let f1_border = if active_field == 1 { Color::new(0.2, 0.9, 1.0, 1.0) } else { Color::new(0.3, 0.45, 0.65, 0.6) };
         draw_rectangle_lines(box1_rect.x, box1_rect.y, box1_rect.w, box1_rect.h, 1.5, f1_border);
         let f1_text = if active_field == 1 { format!("{}{}", p2_name, cursor) } else { p2_name.to_string() };
-        draw_text(&f1_text, box1_rect.x + 12.0, box1_rect.y + 26.0, 20.0, Color::new(1.0, 0.95, 0.35, 1.0));
+        draw_text(&f1_text, box1_rect.x + 12.0, box1_rect.y + 25.0, 20.0, Color::new(1.0, 0.95, 0.35, 1.0));
+        next_y += 68.0;
     }
 
+    // Country / Flag Field
+    let country_field_idx = if is_two_player { 2 } else { 1 };
+    let fc_y = next_y;
+    draw_text("Country / Flag Badge (Optional):", card_x + 40.0, fc_y - 8.0, 17.0, WHITE);
+    let boxc_rect = Rect::new(card_x + 40.0, fc_y, card_w - 80.0, 36.0);
+    draw_rectangle(boxc_rect.x, boxc_rect.y, boxc_rect.w, boxc_rect.h, Color::new(0.05, 0.08, 0.14, 0.95));
+    let fc_border = if active_field == country_field_idx { Color::new(0.2, 0.9, 1.0, 1.0) } else { Color::new(0.3, 0.45, 0.65, 0.6) };
+    draw_rectangle_lines(boxc_rect.x, boxc_rect.y, boxc_rect.w, boxc_rect.h, 1.5, fc_border);
+
+    let display_str = format!("<  {}  >", country_display(country_code));
+    let display_dim = measure_text(&display_str, None, 18, 1.0);
+    draw_text(
+        &display_str,
+        boxc_rect.x + (boxc_rect.w - display_dim.width) * 0.5,
+        boxc_rect.y + 25.0,
+        18.0,
+        Color::new(0.3, 0.9, 1.0, 1.0),
+    );
+
     // Confirm Prompt
-    let btn_y = card_y + card_h - 40.0;
-    let hint = "Press Enter / Tab to Confirm & Proceed | Esc to Cancel";
-    let hint_dim = measure_text(hint, None, 15, 1.0);
-    draw_text(hint, (VIRTUAL_WIDTH - hint_dim.width) * 0.5, btn_y, 15.0, Color::new(0.3, 0.95, 1.0, 0.9));
+    let btn_y = card_y + card_h - 32.0;
+    let hint = "Tab / Up / Down: Switch Field | Left / Right: Change Country | Enter: Confirm";
+    let hint_dim = measure_text(hint, None, 13, 1.0);
+    draw_text(hint, (VIRTUAL_WIDTH - hint_dim.width) * 0.5, btn_y, 13.0, Color::new(0.3, 0.95, 1.0, 0.9));
 }
 
 pub fn render_server_browser(
@@ -700,17 +733,22 @@ pub fn render_pause_menu(selected_item: usize) {
 
 pub fn render_matchmaking_queue(
     player_name: &str,
+    country_code: &str,
     my_rating: f64,
     tolerance: f64,
+    elo_range: EloSearchRange,
+    arena: ArenaType,
     elapsed_sec: f32,
     rank_title: &str,
+    active_challenges: &[ChallengeBroadcast],
+    cross_offer: Option<&CrossArenaOffer>,
     time: f32,
 ) {
     // Backdrop dimming
     draw_rectangle(0.0, 0.0, VIRTUAL_WIDTH, VIRTUAL_HEIGHT, Color::new(0.04, 0.05, 0.1, 0.88));
 
-    let card_w = 600.0;
-    let card_h = 420.0;
+    let card_w = 660.0;
+    let card_h = 490.0;
     let card_x = (VIRTUAL_WIDTH - card_w) * 0.5;
     let card_y = (VIRTUAL_HEIGHT - card_h) * 0.5;
 
@@ -731,16 +769,16 @@ pub fn render_matchmaking_queue(
     // Title & Subtitle
     let title = "RANKED QUICK MATCH";
     let title_dim = measure_text(title, None, 30, 1.0);
-    draw_text(title, (VIRTUAL_WIDTH - title_dim.width) * 0.5, card_y + 44.0, 30.0, Color::new(0.3, 0.9, 1.0, 1.0));
+    draw_text(title, (VIRTUAL_WIDTH - title_dim.width) * 0.5, card_y + 40.0, 30.0, Color::new(0.3, 0.9, 1.0, 1.0));
 
-    let sub = "Automated Glicko-2 Skill-Based Matchmaking";
+    let sub = "Automated Glicko-2 Matchmaking & Live Challenge Radar";
     let sub_dim = measure_text(sub, None, 14, 1.0);
-    draw_text(sub, (VIRTUAL_WIDTH - sub_dim.width) * 0.5, card_y + 68.0, 14.0, Color::new(1.0, 0.85, 0.35, 0.9));
+    draw_text(sub, (VIRTUAL_WIDTH - sub_dim.width) * 0.5, card_y + 62.0, 14.0, Color::new(1.0, 0.85, 0.35, 0.9));
 
     // Animated Radar Scanner Circle
     let radar_center_x = VIRTUAL_WIDTH * 0.5;
-    let radar_center_y = card_y + 155.0;
-    let radar_radius = 50.0;
+    let radar_center_y = card_y + 125.0;
+    let radar_radius = 42.0;
 
     // Concentric radar rings
     draw_circle_lines(radar_center_x, radar_center_y, radar_radius, 1.5, Color::new(0.2, 0.6, 0.9, 0.4));
@@ -761,42 +799,127 @@ pub fn render_matchmaking_queue(
     draw_circle(radar_center_x, radar_center_y, 4.0, Color::new(0.4, 1.0, 0.7, 1.0));
 
     // Details Box
-    let box_y = card_y + 225.0;
-    let box_w = card_w - 60.0;
-    let box_x = card_x + 30.0;
-    draw_rectangle(box_x, box_y, box_w, 120.0, Color::new(0.05, 0.08, 0.15, 0.85));
-    draw_rectangle_lines(box_x, box_y, box_w, 120.0, 1.0, Color::new(0.3, 0.5, 0.75, 0.5));
+    let box_y = card_y + 180.0;
+    let box_w = card_w - 50.0;
+    let box_x = card_x + 25.0;
+    draw_rectangle(box_x, box_y, box_w, 132.0, Color::new(0.05, 0.08, 0.15, 0.85));
+    draw_rectangle_lines(box_x, box_y, box_w, 132.0, 1.0, Color::new(0.3, 0.5, 0.75, 0.5));
 
     let mins = (elapsed_sec / 60.0).floor() as u32;
     let secs = (elapsed_sec % 60.0).floor() as u32;
 
     let line1_label = "Player Profile:";
-    let line1_val = format!("{} (Rating: {:.0} - {})", player_name, my_rating, rank_title);
-    let line2_label = "Search Range:";
-    let line2_val = format!("{:.0} - {:.0} (±{:.0} Rating)", (my_rating - tolerance).max(400.0), my_rating + tolerance, tolerance);
-    let line3_label = "Status:";
-    let line3_val = format!("Searching LAN & Online... ({:02}:{:02})", mins, secs);
+    let line1_val = format!("{} {} (Rating: {:.0} - {})", country_badge(country_code), player_name, my_rating, rank_title);
 
-    let draw_row = |lbl: &str, val: &str, y: f32| {
-        draw_text(lbl, box_x + 20.0, y, 16.0, Color::new(0.7, 0.8, 0.9, 0.9));
-        draw_text(val, box_x + 160.0, y, 16.0, Color::new(1.0, 0.95, 0.4, 1.0));
+    let line2_label = "Search Range:";
+    let line2_val = if elo_range == EloSearchRange::Unrestricted {
+        "Unrestricted (Any Elo)  [ E ] Cycle".to_string()
+    } else {
+        format!("{:.0} - {:.0} (±{:.0} Rating, +1/3 per 5s)  [ E ] Cycle", (my_rating - tolerance).max(400.0), my_rating + tolerance, tolerance)
     };
 
-    draw_row(line1_label, &line1_val, box_y + 32.0);
-    draw_row(line2_label, &line2_val, box_y + 66.0);
-    draw_row(line3_label, &line3_val, box_y + 100.0);
+    let line3_label = "Court / Arena:";
+    let line3_val = format!("{}  [ A ] Cycle Court", arena.name());
 
-    // Cancel prompt
-    let cancel_prompt = "Press [ ESC ] to Cancel Search and Return to Main Menu";
-    let c_dim = measure_text(cancel_prompt, None, 15, 1.0);
+    let line4_label = "Status:";
+    let line4_val = format!("Seeking Match... ({:02}:{:02}) | Broadcasting Challenge", mins, secs);
+
+    let draw_row = |lbl: &str, val: &str, y: f32| {
+        draw_text(lbl, box_x + 18.0, y, 15.0, Color::new(0.7, 0.8, 0.9, 0.9));
+        draw_text(val, box_x + 140.0, y, 15.0, Color::new(1.0, 0.95, 0.4, 1.0));
+    };
+
+    draw_row(line1_label, &line1_val, box_y + 26.0);
+    draw_row(line2_label, &line2_val, box_y + 54.0);
+    draw_row(line3_label, &line3_val, box_y + 82.0);
+    draw_row(line4_label, &line4_val, box_y + 110.0);
+
+    // Active Online Challenges Bar
+    let chal_y = card_y + 322.0;
+    let chal_w = box_w;
+    let chal_x = box_x;
+    let chal_h = 108.0;
+    draw_rectangle(chal_x, chal_y, chal_w, chal_h, Color::new(0.04, 0.07, 0.13, 0.88));
+    draw_rectangle_lines(chal_x, chal_y, chal_w, chal_h, 1.0, Color::new(0.25, 0.45, 0.7, 0.4));
+
+    let chal_title = format!("Open Online Challenges ({} waiting in pool):", active_challenges.len());
+    draw_text(&chal_title, chal_x + 16.0, chal_y + 22.0, 14.0, Color::new(0.3, 0.9, 1.0, 0.9));
+
+    if active_challenges.is_empty() {
+        let empty_msg = "No other players currently waiting. Your challenge is broadcast to all active players!";
+        draw_text(empty_msg, chal_x + 16.0, chal_y + 58.0, 13.0, Color::new(0.7, 0.75, 0.85, 0.75));
+    } else {
+        for (idx, ch) in active_challenges.iter().take(2).enumerate() {
+            let row_y = chal_y + 48.0 + idx as f32 * 26.0;
+            let c_info = format!(
+                "• {} {} (Rating: {:.0})  -  Preferred Court: {}",
+                country_badge(&ch.country),
+                ch.name,
+                ch.rating,
+                ch.arena_name
+            );
+            draw_text(&c_info, chal_x + 16.0, row_y, 14.0, Color::new(1.0, 0.9, 0.45, 0.95));
+        }
+    }
+
+    // Cancel prompt & Key Shortcuts
+    let hint_str = format!("Press [ ESC ] to Cancel Search | [ E ] Range: {} | [ A ] Cycle Court", elo_range.name());
+    let c_dim = measure_text(&hint_str, None, 14, 1.0);
     let pulse_c = (time * 4.0).sin().abs() * 0.2 + 0.8;
     draw_text(
-        cancel_prompt,
+        &hint_str,
         (VIRTUAL_WIDTH - c_dim.width) * 0.5,
-        card_y + card_h - 22.0,
-        15.0,
-        Color::new(0.95, 0.4, 0.4, pulse_c),
+        card_y + card_h - 18.0,
+        14.0,
+        Color::new(0.2, 0.9, 1.0, pulse_c),
     );
+
+    // Cross-Arena Challenge Modal Popup (if offer received)
+    if let Some(offer) = cross_offer {
+        draw_rectangle(0.0, 0.0, VIRTUAL_WIDTH, VIRTUAL_HEIGHT, Color::new(0.02, 0.03, 0.08, 0.82));
+
+        let m_w = 580.0;
+        let m_h = 280.0;
+        let m_x = (VIRTUAL_WIDTH - m_w) * 0.5;
+        let m_y = (VIRTUAL_HEIGHT - m_h) * 0.5;
+
+        draw_rectangle(m_x, m_y, m_w, m_h, Color::new(0.08, 0.12, 0.22, 0.98));
+        draw_rectangle_lines(m_x, m_y, m_w, m_h, 2.5, Color::new(1.0, 0.8, 0.2, 0.95));
+
+        draw_line(m_x + 10.0, m_y + 1.0, m_x + m_w - 10.0, m_y + 1.0, 2.0, Color::new(1.0, 0.9, 0.3, 1.0));
+
+        let m_title = "CROSS-ARENA CHALLENGE DETECTED!";
+        let mt_dim = measure_text(m_title, None, 25, 1.0);
+        draw_text(m_title, (VIRTUAL_WIDTH - mt_dim.width) * 0.5, m_y + 40.0, 25.0, Color::new(1.0, 0.8, 0.2, 1.0));
+
+        let m_sub = "A suitable skill opponent was found, but is waiting in another court:";
+        let ms_dim = measure_text(m_sub, None, 14, 1.0);
+        draw_text(m_sub, (VIRTUAL_WIDTH - ms_dim.width) * 0.5, m_y + 66.0, 14.0, Color::new(0.85, 0.9, 0.98, 0.85));
+
+        let box_offer_y = m_y + 84.0;
+        let box_offer_w = m_w - 40.0;
+        let box_offer_x = m_x + 20.0;
+        draw_rectangle(box_offer_x, box_offer_y, box_offer_w, 88.0, Color::new(0.04, 0.07, 0.14, 0.9));
+        draw_rectangle_lines(box_offer_x, box_offer_y, box_offer_w, 88.0, 1.0, Color::new(0.3, 0.5, 0.7, 0.4));
+
+        let opp_str = format!("Opponent: {} {}  (Rating: {:.0})", country_badge(&offer.opponent_country), offer.opponent_name, offer.opponent_rating);
+        draw_text(&opp_str, box_offer_x + 16.0, box_offer_y + 25.0, 16.0, WHITE);
+
+        let opp_arena_str = format!("Opponent's Court:  {}", ArenaType::from_index(offer.opponent_arena).name());
+        draw_text(&opp_arena_str, box_offer_x + 16.0, box_offer_y + 50.0, 15.0, Color::new(1.0, 0.85, 0.35, 1.0));
+
+        let my_arena_str = format!("Your Court:        {}", ArenaType::from_index(offer.my_arena).name());
+        draw_text(&my_arena_str, box_offer_x + 16.0, box_offer_y + 74.0, 15.0, Color::new(0.3, 0.9, 1.0, 1.0));
+
+        // Action options
+        let opt1 = "[ Y ]      Accept Opponent's Court & Play";
+        let opt2 = "[ Space ]  Propose Coin-Flip Consensus Court (50/50)";
+        let opt3 = "[ N / Esc ] Decline Offer & Continue Searching";
+
+        draw_text(opt1, m_x + 40.0, m_y + 200.0, 16.0, Color::new(0.3, 1.0, 0.5, 1.0));
+        draw_text(opt2, m_x + 40.0, m_y + 225.0, 15.0, Color::new(0.3, 0.85, 1.0, 0.95));
+        draw_text(opt3, m_x + 40.0, m_y + 250.0, 15.0, Color::new(1.0, 0.45, 0.45, 0.9));
+    }
 }
 
 pub fn render_victory_screen(

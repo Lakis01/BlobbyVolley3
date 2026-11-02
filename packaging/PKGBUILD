@@ -1,6 +1,6 @@
 # Maintainer: gratis01 <gratis01@local>
 pkgname=blobby-volley-3
-pkgver=3.0.0
+pkgver=3.3.0
 pkgrel=1
 pkgdesc="Blobby Volley 3 - Remastered 2026 Edition in Rust"
 arch=('x86_64')
