@@ -304,3 +304,36 @@ fn test_master_server_query_structure() {
     assert!(!servers.is_empty(), "Server browser must at least return LAN / local room option");
 }
 
+#[test]
+fn test_stadium_and_arena_cycle() {
+    use blobby_core::render::arenas::ArenaType;
+
+    // Verify 8 distinct arena types
+    let total_arenas = 8;
+    let mut current = ArenaType::from_index(0);
+    assert_eq!(current, ArenaType::SunsetBeach);
+
+    let mut names = Vec::new();
+    for i in 0..total_arenas {
+        let arena = ArenaType::from_index(i);
+        assert_eq!(arena.to_index(), i);
+        names.push(arena.name());
+    }
+
+    // Verify stadium maps with spectator crowds exist
+    assert!(names.contains(&"Blobby Grand Arena (Stadium)"), "Blobby Grand Arena stadium must be in roster");
+    assert!(names.contains(&"Neo Cyber Stadium"), "Neo Cyber Stadium must be in roster");
+    assert!(names.contains(&"Olympic Beach Stadium"), "Olympic Beach Stadium must be in roster");
+
+    // Verify cyclic navigation (next and prev)
+    for _ in 0..total_arenas {
+        current = current.next();
+    }
+    assert_eq!(current, ArenaType::SunsetBeach, "Cycling next 8 times must return to starting arena");
+
+    for _ in 0..total_arenas {
+        current = current.prev();
+    }
+    assert_eq!(current, ArenaType::SunsetBeach, "Cycling prev 8 times must return to starting arena");
+}
+

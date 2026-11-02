@@ -1034,7 +1034,7 @@ async fn main() {
         });
 
         // 1. Render Arena Environment
-        render_arena(arena, global_time, cam_x0, cam_w);
+        render_arena(arena, global_time, cam_x0, cam_w, physics.ball.pos);
 
         // 2. Render Volleyball Net
         net_renderer.render(global_time);

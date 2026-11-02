@@ -7,4 +7,5 @@ pub mod net;
 pub mod audio;
 pub mod config;
 pub mod glicko;
+pub mod render;
 
