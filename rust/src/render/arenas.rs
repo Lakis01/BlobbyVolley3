@@ -255,44 +255,7 @@ fn render_grand_stadium(time: f32, x_left: f32, x_right: f32, full_w: f32, ball_
     draw_rectangle(180.0, lower_arch_y + 18.0, 32.0, 18.0, Color::new(0.08, 0.1, 0.15, 0.95));
     draw_rectangle(590.0, lower_arch_y + 18.0, 32.0, 18.0, Color::new(0.08, 0.1, 0.15, 0.95));
 
-    // 2. Twin Sideline Arena Display Boards (x: 40..220 and 580..760)
-    // Placed on the stadium wings so the center court is 100% unobstructed for the HUD
-    let screens = [(55.0, 78.0, 185.0, 68.0, "★ TEAM BLUE ★"), (560.0, 78.0, 185.0, 68.0, "★ TEAM RED ★")];
-    for &(sx, sy, sw, sh, s_title) in &screens {
-        // Cables from ceiling truss
-        draw_line(sx + 15.0, lower_arch_y + 18.0, sx + 15.0, sy, 2.0, Color::new(0.15, 0.2, 0.28, 0.9));
-        draw_line(sx + sw - 15.0, lower_arch_y + 18.0, sx + sw - 15.0, sy, 2.0, Color::new(0.15, 0.2, 0.28, 0.9));
-
-        // Chassis Frame
-        draw_rectangle(sx - 2.0, sy - 2.0, sw + 4.0, sh + 4.0, Color::new(0.08, 0.1, 0.15, 0.98));
-        draw_rectangle_lines(sx - 2.0, sy - 2.0, sw + 4.0, sh + 4.0, 1.5, Color::new(0.95, 0.75, 0.2, 0.85));
-
-        // Screen display
-        draw_rectangle(sx, sy, sw, sh, Color::new(0.04, 0.07, 0.16, 1.0));
-
-        // Header
-        let pulse = (time * 4.0).sin().abs() * 0.2 + 0.8;
-        draw_rectangle(sx, sy, sw, 15.0, Color::new(0.1, 0.22, 0.48, 0.9));
-        let title_dim = measure_text(s_title, None, 10, 1.0);
-        draw_text(s_title, sx + (sw - title_dim.width) * 0.5, sy + 11.0, 10.0, Color::new(1.0, 0.85, 0.25, pulse));
-
-        // Live Audio / Sine Visualizer Bars
-        for bar in 0..12 {
-            let bx = sx + 12.0 + bar as f32 * 13.5;
-            let bar_h = (time * 6.0 + bar as f32 * 0.8 + sx * 0.01).sin().abs() * 20.0 + 4.0;
-            let by = sy + 44.0 - bar_h * 0.5;
-            let col = if bar % 2 == 0 { Color::new(0.2, 0.95, 1.0, 0.9) } else { Color::new(1.0, 0.35, 0.75, 0.9) };
-            draw_rectangle(bx, by, 7.0, bar_h, col);
-        }
-
-        // Screen Live Ticker
-        draw_rectangle(sx, sy + sh - 13.0, sw, 13.0, Color::new(0.05, 0.08, 0.16, 0.95));
-        let ticker_msg = "OFFICIAL 2026 WORLD TOUR";
-        let t_dim = measure_text(ticker_msg, None, 8, 1.0);
-        draw_text(ticker_msg, sx + (sw - t_dim.width) * 0.5, sy + sh - 3.0, 8.0, Color::new(0.4, 0.95, 1.0, 0.85));
-    }
-
-    // 3. Upper Balcony Tier Bleachers (y = 165, 192, 219)
+    // 2. Upper Balcony Tier Bleachers (y = 165, 192, 219)
     let upper_rows = [165.0, 192.0, 219.0];
     let upper_scales = [0.48, 0.53, 0.58];
     render_stadium_crowd(time, x_left, x_right, &upper_rows, &upper_scales, CrowdStyle::GrandColiseum, ball_pos, cheer);
@@ -859,33 +822,36 @@ fn render_court_boundaries(time: f32, arena: ArenaType) {
         hash_y += 50.0;
     }
 
-    // 3. Modern Tournament Floodlight Stanchions on Court Flanks
-    let draw_floodlight_tower = |tx: f32, is_left: bool| {
-        // Metallic vertical mast
-        draw_rectangle(tx - 3.0, 40.0, 6.0, GROUND_PLANE_HEIGHT_MAX - 40.0, Color::new(0.15, 0.18, 0.25, 0.95));
-        draw_rectangle_lines(tx - 3.0, 40.0, 6.0, GROUND_PLANE_HEIGHT_MAX - 40.0, 1.0, Color::new(0.3, 0.4, 0.55, 0.8));
+    // 3. Modern Tournament Floodlight Stanchions on Court Flanks (only for stadiums/arenas)
+    let has_floodlights = matches!(arena, ArenaType::GrandStadium | ArenaType::OlympicBeach | ArenaType::CyberNeon);
+    if has_floodlights {
+        let draw_floodlight_tower = |tx: f32, is_left: bool| {
+            // Metallic vertical mast
+            draw_rectangle(tx - 3.0, 40.0, 6.0, GROUND_PLANE_HEIGHT_MAX - 40.0, Color::new(0.15, 0.18, 0.25, 0.95));
+            draw_rectangle_lines(tx - 3.0, 40.0, 6.0, GROUND_PLANE_HEIGHT_MAX - 40.0, 1.0, Color::new(0.3, 0.4, 0.55, 0.8));
 
-        // Top luminaire head
-        let head_x = tx - 14.0;
-        draw_rectangle(head_x, 32.0, 28.0, 12.0, Color::new(0.08, 0.1, 0.15, 1.0));
-        draw_rectangle_lines(head_x, 32.0, 28.0, 12.0, 1.0, Color::new(0.4, 0.6, 0.85, 0.9));
+            // Top luminaire head
+            let head_x = tx - 14.0;
+            draw_rectangle(head_x, 32.0, 28.0, 12.0, Color::new(0.08, 0.1, 0.15, 1.0));
+            draw_rectangle_lines(head_x, 32.0, 28.0, 12.0, 1.0, Color::new(0.4, 0.6, 0.85, 0.9));
 
-        // Glowing LED light bar
-        draw_rectangle(head_x + 2.0, 36.0, 24.0, 4.0, Color::new(1.0, 0.98, 0.9, 0.95));
-        draw_circle(tx, 38.0, 18.0, Color::new(1.0, 0.95, 0.8, 0.15));
+            // Glowing LED light bar
+            draw_rectangle(head_x + 2.0, 36.0, 24.0, 4.0, Color::new(1.0, 0.98, 0.9, 0.95));
+            draw_circle(tx, 38.0, 18.0, Color::new(1.0, 0.95, 0.8, 0.15));
 
-        // Downward illumination cone
-        let target_x = if is_left { 200.0 } else { 600.0 };
-        draw_triangle(
-            Vec2::new(tx - 6.0, 44.0),
-            Vec2::new(tx + 6.0, 44.0),
-            Vec2::new(target_x, GROUND_PLANE_HEIGHT_MAX),
-            Color::new(1.0, 0.95, 0.8, 0.04),
-        );
-    };
+            // Downward illumination cone
+            let target_x = if is_left { 200.0 } else { 600.0 };
+            draw_triangle(
+                Vec2::new(tx - 6.0, 44.0),
+                Vec2::new(tx + 6.0, 44.0),
+                Vec2::new(target_x, GROUND_PLANE_HEIGHT_MAX),
+                Color::new(1.0, 0.95, 0.8, 0.04),
+            );
+        };
 
-    draw_floodlight_tower(LEFT_PLANE - 14.0, true);
-    draw_floodlight_tower(RIGHT_PLANE + 14.0, false);
+        draw_floodlight_tower(LEFT_PLANE - 14.0, true);
+        draw_floodlight_tower(RIGHT_PLANE + 14.0, false);
+    }
 }
 
 // =========================================================================
@@ -934,8 +900,11 @@ fn render_perimeter_boards(time: f32, _arena: ArenaType, x_left: f32, x_right: f
         AdBanner { name: "GODOT", accent: Color::new(0.28, 0.55, 0.82, 1.0), tagline: "free game engine" },
         AdBanner { name: "blender", accent: Color::new(0.92, 0.52, 0.08, 1.0), tagline: "open 3D creation" },
         AdBanner { name: "FFmpeg", accent: Color::new(0.15, 0.75, 0.25, 1.0), tagline: "fast multimedia" },
-        AdBanner { name: "VLC media", accent: Color::new(1.0, 0.55, 0.05, 1.0), tagline: "plays everything" },
+        AdBanner { name: "mpv", accent: Color::new(0.48, 0.18, 0.65, 1.0), tagline: "video player" },
         AdBanner { name: "git", accent: Color::new(0.94, 0.32, 0.2, 1.0), tagline: "source control" },
+        AdBanner { name: "GitHub", accent: Color::new(0.90, 0.92, 0.96, 1.0), tagline: "code & collaborate" },
+        AdBanner { name: "OpenCode", accent: Color::new(0.18, 0.68, 0.98, 1.0), tagline: "open development" },
+        AdBanner { name: "Navidrome", accent: Color::new(0.0, 0.78, 0.85, 1.0), tagline: "music server" },
         AdBanner { name: "NEOVIM", accent: Color::new(0.35, 0.72, 0.28, 1.0), tagline: "hyper extensible" },
     ];
 
@@ -1107,40 +1076,51 @@ fn render_stadium_crowd(
             let is_rival_scorer = cheer.last_scorer == Some(favored_side.opponent()) && cheer.cheer_timer > 0.0;
             let is_rival_winner = cheer.match_winner == Some(favored_side.opponent());
 
-            // Stadium Wave ("La Ola")
-            let wave_speed = 3.6;
-            let wave_phase = spec_x * 0.013 - time * wave_speed;
-            let in_wave = wave_phase.sin().max(0.0).powf(3.5);
-            let wave_lift = in_wave * 13.0 * scale;
+            // 1. Occasional, distinctly visible Stadium Wave ("La Ola")
+            // Runs once every 16 seconds for 3.5 seconds, sweeping from left to right across the bleachers.
+            let wave_period = 16.0;
+            let wave_phase = time % wave_period;
+            let mut wave_lift = 0.0;
+            let mut is_in_wave = false;
 
-            // Cheering / idle bounce
-            let bounce = (time * 2.6 + col as f32 * 0.5 + r as f32 * 1.3).sin() * (1.2 * scale);
-            let is_hyper = ((col as f32 * 31.7 + r as f32 * 17.3).sin() * 43758.54).fract().abs() > 0.82;
-            let hyper_hop = if is_hyper {
-                (time * 6.0 + col as f32 * 1.2).sin().max(0.0).powf(2.0) * (8.0 * scale)
-            } else {
-                0.0
-            };
+            if wave_phase < 3.5 && cheer.cheer_timer <= 0.0 && cheer.match_winner.is_none() {
+                // Wave crest travels across the entire bleacher width
+                let wave_x = x_left + (wave_phase / 3.5) * (full_w + 140.0) - 70.0;
+                let dist = (spec_x - wave_x).abs();
+                let wave_span = 80.0 * scale;
+                if dist < wave_span {
+                    let crest = 1.0 - (dist / wave_span);
+                    let shape = (crest * std::f32::consts::PI * 0.5).sin().powf(2.0);
+                    wave_lift = shape * (16.0 * scale);
+                    if shape > 0.4 {
+                        is_in_wave = true;
+                    }
+                }
+            }
 
-            // Celebratory Jump when favored player scores or wins!
+            // 2. Calm, subtle idle breathing when not cheering
+            let idle_breath = (time * 1.8 + col as f32 * 0.25).sin() * (0.5 * scale);
+
+            // 3. Clear, unmistakable celebrations on Point Scored and Match Victory!
             let mut cheer_lift = 0.0;
             let mut is_cheering = false;
             if is_favored_winner {
-                // Extra hard celebratory cheering when preferred player wins the match!
-                let intensity = (time * 8.5 + col as f32 * 1.3).sin().max(0.0).powf(1.8);
-                cheer_lift = intensity * (22.0 * scale);
+                // Euphoric victory celebration for preferred player
+                let hop = (time * 8.0 + col as f32 * 1.1).sin().max(0.0).powf(1.6);
+                cheer_lift = hop * (24.0 * scale);
                 is_cheering = true;
             } else if is_favored_scorer {
-                // Cheering when preferred player scores a point!
+                // Clear, punchy celebratory hops when preferred player scores a point!
+                let hop = (time * 7.5 + col as f32 * 1.2).sin().max(0.0).powf(1.6);
                 let fade = (cheer.cheer_timer / 2.5).clamp(0.0, 1.0);
-                let jump = (time * 7.5 + col as f32 * 1.5).sin().max(0.0).powf(2.0);
-                cheer_lift = jump * (15.0 * scale) * fade;
+                cheer_lift = hop * (18.0 * scale) * fade;
                 is_cheering = true;
             } else if is_rival_scorer || is_rival_winner {
-                cheer_lift = -2.5 * scale;
+                // Disappointed slump when opponent scores
+                cheer_lift = -3.5 * scale;
             }
 
-            let total_lift = (wave_lift + hyper_hop + bounce + cheer_lift).max(-3.0 * scale);
+            let total_lift = (wave_lift + idle_breath + cheer_lift).max(-4.0 * scale);
             let spec_y = row_y - total_lift;
 
             // Squash and stretch
@@ -1251,10 +1231,11 @@ fn render_stadium_crowd(
                 }
             }
 
-            // Cheering arms raised in the air!
-            if is_cheering || total_lift > 5.0 * scale {
-                draw_circle(spec_x - body_w * 0.95, spec_y - body_h * 0.72, 2.2 * scale, base_col);
-                draw_circle(spec_x + body_w * 0.95, spec_y - body_h * 0.72, 2.2 * scale, base_col);
+            // Raised arms during celebrations and laola crest
+            if is_cheering || is_in_wave {
+                let arm_lift = if is_cheering { 0.85 } else { 0.72 };
+                draw_circle(spec_x - body_w * 0.95, spec_y - body_h * arm_lift, 2.2 * scale, base_col);
+                draw_circle(spec_x + body_w * 0.95, spec_y - body_h * arm_lift, 2.2 * scale, base_col);
             }
 
             // Waving Fan Flags & Signs in Player's Colors
