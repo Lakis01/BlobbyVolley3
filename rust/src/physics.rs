@@ -136,7 +136,9 @@ pub struct PhysicWorld {
     pub blobs: [Blobby; 2],
     pub ball: Ball,
     pub events: Vec<MatchEvent>,
-    pub prev_ball_x: f32,
+    pub prev_ball_pos: Vec2,
+    pub prev_blob_pos: [Vec2; 2],
+    pub current_ball_side: PlayerSide,
     pub blob_collision_cooldown: [i32; 2],
 }
 
@@ -149,7 +151,12 @@ impl PhysicWorld {
             ],
             ball: Ball::new(200.0, STANDARD_BALL_HEIGHT),
             events: Vec::new(),
-            prev_ball_x: 200.0,
+            prev_ball_pos: Vec2::new(200.0, STANDARD_BALL_HEIGHT),
+            prev_blob_pos: [
+                Vec2::new(200.0, GROUND_PLANE_HEIGHT),
+                Vec2::new(600.0, GROUND_PLANE_HEIGHT),
+            ],
+            current_ball_side: PlayerSide::Left,
             blob_collision_cooldown: [0, 0],
         }
     }
@@ -164,25 +171,26 @@ impl PhysicWorld {
         self.blobs[1].vel = Vec2::ZERO;
         self.blobs[1].squash_factor = 1.0;
         self.blobs[1].squash_vel = 0.0;
+
+        self.prev_blob_pos[0] = self.blobs[0].pos;
+        self.prev_blob_pos[1] = self.blobs[1].pos;
     }
 
     pub fn reset_ball(&mut self, serving_side: Option<PlayerSide>) {
-        match serving_side {
-            Some(PlayerSide::Left) => {
+        let side = serving_side.unwrap_or(PlayerSide::Left);
+        match side {
+            PlayerSide::Left => {
                 self.ball.pos = Vec2::new(200.0, STANDARD_BALL_HEIGHT);
                 self.ball.angular_velocity = STANDARD_BALL_ANGULAR_VELOCITY;
             }
-            Some(PlayerSide::Right) => {
+            PlayerSide::Right => {
                 self.ball.pos = Vec2::new(600.0, STANDARD_BALL_HEIGHT);
                 self.ball.angular_velocity = -STANDARD_BALL_ANGULAR_VELOCITY;
             }
-            None => {
-                self.ball.pos = Vec2::new(400.0, 450.0);
-                self.ball.angular_velocity = STANDARD_BALL_ANGULAR_VELOCITY;
-            }
         }
         self.ball.vel = Vec2::ZERO;
-        self.prev_ball_x = self.ball.pos.x;
+        self.prev_ball_pos = self.ball.pos;
+        self.current_ball_side = side;
         self.blob_collision_cooldown = [0, 0];
     }
 
@@ -191,29 +199,37 @@ impl PhysicWorld {
     }
 
     fn player_top_ball_collision(&self, side: PlayerSide) -> bool {
+        let idx = side.index();
+        let blob_disp = self.blobs[idx].pos - self.prev_blob_pos[idx];
+        let rel_prev_ball = self.prev_ball_pos - blob_disp;
         let blob_pos = Vec2::new(
-            self.blobs[side.index()].pos.x,
-            self.blobs[side.index()].pos.y - BLOBBY_UPPER_SPHERE,
+            self.blobs[idx].pos.x,
+            self.blobs[idx].pos.y - BLOBBY_UPPER_SPHERE,
         );
+        let r = BALL_RADIUS + BLOBBY_UPPER_RADIUS;
         circle_circle_collision(
             self.ball.pos,
             BALL_RADIUS,
             blob_pos,
             BLOBBY_UPPER_RADIUS,
-        )
+        ) || segment_circle_collision(rel_prev_ball, self.ball.pos, blob_pos, r)
     }
 
     fn player_bottom_ball_collision(&self, side: PlayerSide) -> bool {
+        let idx = side.index();
+        let blob_disp = self.blobs[idx].pos - self.prev_blob_pos[idx];
+        let rel_prev_ball = self.prev_ball_pos - blob_disp;
         let blob_pos = Vec2::new(
-            self.blobs[side.index()].pos.x,
-            self.blobs[side.index()].pos.y + BLOBBY_LOWER_SPHERE,
+            self.blobs[idx].pos.x,
+            self.blobs[idx].pos.y + BLOBBY_LOWER_SPHERE,
         );
+        let r = BALL_RADIUS + BLOBBY_LOWER_RADIUS;
         circle_circle_collision(
             self.ball.pos,
             BALL_RADIUS,
             blob_pos,
             BLOBBY_LOWER_RADIUS,
-        )
+        ) || segment_circle_collision(rel_prev_ball, self.ball.pos, blob_pos, r)
     }
 
     fn handle_blob(&mut self, side: PlayerSide, input: PlayerInput) {
@@ -397,13 +413,15 @@ impl PhysicWorld {
         &mut self,
         left_input: PlayerInput,
         right_input: PlayerInput,
-        is_ball_valid: bool,
+        _is_ball_valid: bool,
         is_game_running: bool,
     ) {
         self.blob_collision_cooldown[0] = (self.blob_collision_cooldown[0] - 1).max(0);
         self.blob_collision_cooldown[1] = (self.blob_collision_cooldown[1] - 1).max(0);
 
-        let prev_x = self.ball.pos.x;
+        self.prev_ball_pos = self.ball.pos;
+        self.prev_blob_pos[0] = self.blobs[0].pos;
+        self.prev_blob_pos[1] = self.blobs[1].pos;
 
         // Blobby physical steps
         self.handle_blob(PlayerSide::Left, left_input);
@@ -415,25 +433,24 @@ impl PhysicWorld {
             self.ball.vel.y += BALL_GRAVITATION;
         }
 
-        // Ball blobby collision
-        if is_ball_valid {
-            self.handle_blobby_ball_collision(PlayerSide::Left);
-            self.handle_blobby_ball_collision(PlayerSide::Right);
-        }
+        // Ball blobby collision: always physically bounce so ball never phases through blob like air
+        self.handle_blobby_ball_collision(PlayerSide::Left);
+        self.handle_blobby_ball_collision(PlayerSide::Right);
 
         // Ball world collisions (walls, net, ground)
         self.handle_ball_world_collisions();
 
         // Check if ball crossed the net plane
-        let curr_x = self.ball.pos.x;
-        if prev_x < NET_POSITION_X && curr_x >= NET_POSITION_X {
-            self.events.push(MatchEvent::BallCrossedNet { new_side: PlayerSide::Right });
-            self.blob_collision_cooldown = [0, 0];
-        } else if prev_x > NET_POSITION_X && curr_x <= NET_POSITION_X {
-            self.events.push(MatchEvent::BallCrossedNet { new_side: PlayerSide::Left });
+        let new_side = if self.ball.pos.x < NET_POSITION_X {
+            PlayerSide::Left
+        } else {
+            PlayerSide::Right
+        };
+        if new_side != self.current_ball_side {
+            self.current_ball_side = new_side;
+            self.events.push(MatchEvent::BallCrossedNet { new_side });
             self.blob_collision_cooldown = [0, 0];
         }
-        self.prev_ball_x = curr_x;
 
         // Blobby net constraints
         if self.blobs[0].pos.x + BLOBBY_LOWER_RADIUS > NET_POSITION_X - NET_RADIUS {
@@ -478,4 +495,18 @@ pub fn circle_circle_collision(pos1: Vec2, rad1: f32, pos2: Vec2, rad2: f32) -> 
     let dist_sq = (pos1 - pos2).length_squared();
     let sum = rad1 + rad2;
     dist_sq < sum * sum
+}
+
+/// Continuous Collision Detection (CCD): Check whether a moving sphere swept from p1 to p2 intersects a circle
+#[inline]
+pub fn segment_circle_collision(p1: Vec2, p2: Vec2, center: Vec2, radius: f32) -> bool {
+    let d = p2 - p1;
+    let len_sq = d.length_squared();
+    let t = if len_sq > 1e-6 {
+        ((center - p1).dot(d) / len_sq).clamp(0.0, 1.0)
+    } else {
+        0.0
+    };
+    let closest = p1 + d * t;
+    (center - closest).length_squared() < radius * radius
 }

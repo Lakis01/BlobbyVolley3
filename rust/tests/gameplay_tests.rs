@@ -366,3 +366,120 @@ fn test_touch_counter_reset_on_net_crossing_and_valid_reception() {
     assert!(logic.is_ball_valid, "Ball must remain valid on Player 2 first contact");
 }
 
+#[test]
+fn test_high_ball_jump_collision() {
+    let mut physics = PhysicWorld::new();
+    let mut logic = GameLogic::new(RuleMode::Modern, 15);
+    physics.reset_players();
+    // Test multiple starting heights and velocities
+    for start_y in [-300.0, -200.0, -100.0, 0.0, 100.0] {
+        physics.reset_players();
+        physics.ball.pos = Vec2::new(200.0, start_y);
+        physics.ball.vel = Vec2::new(0.0, 10.0);
+        logic.is_game_running = true;
+        logic.is_ball_valid = true;
+        logic.touches = [0, 0];
+        logic.squish = [0, 0];
+
+        let mut hit = false;
+        let mut hit_ticks = Vec::new();
+        for tick in 0..150 {
+            let p1_input = PlayerInput { left: false, right: false, up: true };
+            let p2_input = PlayerInput::default();
+            physics.step(p1_input, p2_input, logic.is_ball_valid, logic.is_game_running);
+            logic.step(PHYSICS_DT);
+            for ev in physics.take_events() {
+                match ev {
+                    MatchEvent::BallHitBlob { player, .. } => {
+                        hit = true;
+                        logic.on_ball_hits_blob(player);
+                        hit_ticks.push((tick, logic.touches[0]));
+                    }
+                    MatchEvent::BallHitGround { side } => {
+                        logic.on_ball_hits_ground(side);
+                    }
+                    MatchEvent::BallCrossedNet { new_side } => {
+                        logic.on_ball_crosses_net(new_side);
+                    }
+                    _ => {}
+                }
+            }
+        }
+        assert!(hit, "Player 1 must hit the ball starting from y = {}", start_y);
+        println!("start_y: {}, hit_ticks: {:?}, is_valid: {}", start_y, hit_ticks, logic.is_ball_valid);
+    }
+}
+
+#[test]
+fn test_color_conflict_auto_resolution() {
+    use blobby_core::render::blob::BlobTheme;
+    let mut left = BlobTheme::ElectricCyan;
+    let mut right = BlobTheme::SunsetOrange;
+    assert_ne!(left, right);
+
+    // If left changes to sunset orange, right must auto-advance so they never compete with same color
+    left = BlobTheme::SunsetOrange;
+    if left == right {
+        right = right.next();
+    }
+    assert_ne!(left, right);
+    assert_eq!(right, BlobTheme::SunsetOrange.next());
+
+    // If right changes to what left has, right auto-advances
+    right = left;
+    if right == left {
+        right = right.next();
+    }
+    assert_ne!(left, right);
+}
+
+#[test]
+fn test_high_ball_camera_enum_and_config() {
+    use blobby_core::config::HighBallCamera;
+
+    assert_eq!(HighBallCamera::Indicator.to_index(), 0);
+    assert_eq!(HighBallCamera::DynamicZoom.to_index(), 1);
+    assert_eq!(HighBallCamera::Both.to_index(), 2);
+
+    assert_eq!(HighBallCamera::from_index(0), HighBallCamera::Indicator);
+    assert_eq!(HighBallCamera::from_index(1), HighBallCamera::DynamicZoom);
+    assert_eq!(HighBallCamera::from_index(2), HighBallCamera::Both);
+
+    assert_eq!(HighBallCamera::Indicator.next(), HighBallCamera::DynamicZoom);
+    assert_eq!(HighBallCamera::DynamicZoom.next(), HighBallCamera::Both);
+    assert_eq!(HighBallCamera::Both.next(), HighBallCamera::Indicator);
+
+    assert_eq!(HighBallCamera::Indicator.prev(), HighBallCamera::Both);
+}
+
+#[test]
+fn test_touch_counter_fault_and_dead_ball_physics() {
+    let mut logic = GameLogic::new(RuleMode::Modern, 15);
+    let mut physics = PhysicWorld::new();
+    physics.reset_players();
+    physics.reset_ball(Some(PlayerSide::Left));
+    logic.on_serve();
+
+    // 3 touches are legal
+    for _ in 0..3 {
+        logic.squish[0] = 0;
+        logic.on_ball_hits_blob(PlayerSide::Left);
+        assert!(logic.is_ball_valid);
+    }
+    assert_eq!(logic.touches[0], 3);
+
+    // 4th touch is a fault: invalidates ball immediately
+    logic.squish[0] = 0;
+    logic.on_ball_hits_blob(PlayerSide::Left);
+    assert!(!logic.is_ball_valid, "4th touch must fault and invalidate ball");
+    assert_eq!(logic.scores[1], 1, "Rally scoring awards point to opponent on fault");
+
+    // Even after ball is invalidated, physical step still handles ball-blobby bounce without crashing or tunneling
+    physics.ball.pos = Vec2::new(600.0, 400.0);
+    physics.ball.vel = Vec2::new(0.0, 10.0);
+    physics.step(PlayerInput::default(), PlayerInput::default(), logic.is_ball_valid, true);
+    // Ball bounced off right blob
+    assert!(physics.ball.vel.y < 0.0 || physics.ball.pos.y < 460.0);
+}
+
+

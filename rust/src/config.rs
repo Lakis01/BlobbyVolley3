@@ -28,6 +28,8 @@ pub struct UserConfig {
     pub country_code: String,
     #[serde(default = "default_elo_range")]
     pub elo_search_range: usize,
+    #[serde(default)]
+    pub high_ball_camera: usize, // 0 = Indicator, 1 = DynamicZoom, 2 = Both
 }
 
 pub fn default_elo_range() -> usize {
@@ -412,6 +414,56 @@ impl Default for UserConfig {
             matches_played: 0,
             country_code: "".to_string(),
             elo_search_range: 1, // Balanced (±100)
+            high_ball_camera: 0, // Off-Screen Indicator by default
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HighBallCamera {
+    Indicator,   // Rock-solid fixed camera + top-edge HUD indicator tracking X position
+    DynamicZoom, // Smooth dynamic zoom-out tracking ball in high arc
+    Both,        // Dynamic zoom + top-edge HUD indicator
+}
+
+impl HighBallCamera {
+    pub fn name(self) -> &'static str {
+        match self {
+            HighBallCamera::Indicator => "Off-Screen Indicator",
+            HighBallCamera::DynamicZoom => "Dynamic Zoom",
+            HighBallCamera::Both => "Zoom + Indicator",
+        }
+    }
+
+    pub fn from_index(idx: usize) -> Self {
+        match idx {
+            1 => HighBallCamera::DynamicZoom,
+            2 => HighBallCamera::Both,
+            _ => HighBallCamera::Indicator,
+        }
+    }
+
+    pub fn to_index(self) -> usize {
+        match self {
+            HighBallCamera::Indicator => 0,
+            HighBallCamera::DynamicZoom => 1,
+            HighBallCamera::Both => 2,
+        }
+    }
+
+    pub fn next(self) -> Self {
+        match self {
+            HighBallCamera::Indicator => HighBallCamera::DynamicZoom,
+            HighBallCamera::DynamicZoom => HighBallCamera::Both,
+            HighBallCamera::Both => HighBallCamera::Indicator,
+        }
+    }
+
+    pub fn prev(self) -> Self {
+        match self {
+            HighBallCamera::Indicator => HighBallCamera::Both,
+            HighBallCamera::DynamicZoom => HighBallCamera::Indicator,
+            HighBallCamera::Both => HighBallCamera::DynamicZoom,
         }
     }
 }

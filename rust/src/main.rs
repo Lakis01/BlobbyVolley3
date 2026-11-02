@@ -244,8 +244,23 @@ async fn main() {
                                 logic.score_to_win = score_to_win;
                             }
                             render::ui::MenuItem::Arena => arena = if $forward { arena.next() } else { arena.prev() },
-                            render::ui::MenuItem::P1Color => left_theme = if $forward { left_theme.next() } else { left_theme.prev() },
-                            render::ui::MenuItem::P2Color => right_theme = if $forward { right_theme.next() } else { right_theme.prev() },
+                            render::ui::MenuItem::P1Color => {
+                                left_theme = if $forward { left_theme.next() } else { left_theme.prev() };
+                                if left_theme == right_theme {
+                                    right_theme = right_theme.next();
+                                }
+                            }
+                            render::ui::MenuItem::P2Color => {
+                                right_theme = if $forward { right_theme.next() } else { right_theme.prev() };
+                                if right_theme == left_theme {
+                                    right_theme = right_theme.next();
+                                }
+                            }
+                            render::ui::MenuItem::HighBallCamera => {
+                                let cur_cam = crate::config::HighBallCamera::from_index(config.high_ball_camera);
+                                let new_cam = if $forward { cur_cam.next() } else { cur_cam.prev() };
+                                config.high_ball_camera = new_cam.to_index();
+                            }
                             render::ui::MenuItem::Fullscreen => {
                                 fullscreen = !fullscreen;
                                 macroquad::window::set_fullscreen(fullscreen);
@@ -376,8 +391,14 @@ async fn main() {
                         right_theme,
                     );
 
+                    if left_theme == right_theme {
+                        right_theme = right_theme.next();
+                    }
+
                     match game_mode {
                         GameMode::QuickMatch => {
+                            score_to_win = 15;
+                            logic.score_to_win = 15;
                             quick_match_agent = Some(QuickMatchAgent::new(
                                 &player1_name,
                                 &config.country_code,
@@ -434,23 +455,6 @@ async fn main() {
                                 servers,
                                 is_refreshing: false,
                             };
-                        }
-                        GameMode::Leaderboard => {
-                            active_match_opponent = None;
-                            let entries = fetch_leaderboard(
-                                config.matchmaking_registry_url.as_deref(),
-                                "month",
-                                &player1_name,
-                                config.glicko.rating,
-                                config.matches_won,
-                                config.matches_played,
-                            );
-                            state = AppState::Leaderboard {
-                                period_idx: 1,
-                                entries,
-                                is_refreshing: false,
-                            };
-                            audio.play_ball_hit(0.3);
                         }
                         GameMode::BotVsBot => {
                             active_match_opponent = None;
@@ -728,6 +732,11 @@ async fn main() {
                             MatchmakingStatus::MatchedAsHost { opponent_name, opponent_country, opponent_rating, opponent_rd, agreed_arena } => {
                                 audio.play_score();
                                 arena = ArenaType::from_index(agreed_arena);
+                                score_to_win = 15;
+                                logic.score_to_win = 15;
+                                if left_theme == right_theme {
+                                    right_theme = right_theme.next();
+                                }
                                 if let Ok(host) = NetworkHost::bind(DEFAULT_PORT, &player1_name, &config.country_code, arena.name()) {
                                     net_host = Some(host);
                                     active_match_opponent = Some((opponent_name, opponent_rating, opponent_rd, opponent_country));
@@ -740,6 +749,11 @@ async fn main() {
                             MatchmakingStatus::MatchedAsClient { target_addr, opponent_name, opponent_country, opponent_rating, opponent_rd, agreed_arena } => {
                                 audio.play_score();
                                 arena = ArenaType::from_index(agreed_arena);
+                                score_to_win = 15;
+                                logic.score_to_win = 15;
+                                if left_theme == right_theme {
+                                    right_theme = right_theme.next();
+                                }
                                 let mut client = NetworkClient::new();
                                 client.connect(&target_addr);
                                 net_client = Some(client);
@@ -1033,10 +1047,17 @@ async fn main() {
                         for event in events {
                             match event {
                                 MatchEvent::BallHitBlob { player, intensity } => {
+                                    let was_valid = logic.is_ball_valid;
                                     logic.on_ball_hits_blob(player);
                                     vfx.spawn_hit_shockwave(physics.ball.pos, intensity);
                                     audio.play_ball_hit(intensity);
                                     net_renderer.trigger_hit(intensity * 0.3);
+                                    if was_valid && !logic.is_ball_valid {
+                                        audio.play_whistle();
+                                        audio.play_score();
+                                        last_point_scorer = Some(player.opponent());
+                                        cheer_timer = 2.5;
+                                    }
                                 }
                                 MatchEvent::BallHitGround { side } => {
                                     let was_valid = logic.is_ball_valid;
@@ -1188,8 +1209,9 @@ async fn main() {
         clear_background(Color::new(0.05, 0.05, 0.08, 1.0));
 
         // Dynamic camera zoom out for high balls & shifted 2D scenery down
+        let allow_zoom = config.high_ball_camera != 0; // 0 = Indicator (rock-solid camera), 1 = DynamicZoom, 2 = Both
         let target_cam_y = if state == AppState::Playing || matches!(state, AppState::Victory(_)) {
-            if physics.ball.pos.y < 150.0 {
+            if allow_zoom && physics.ball.pos.y < 150.0 {
                 (265.0 - (150.0 - physics.ball.pos.y) * 0.45).max(160.0)
             } else {
                 265.0
@@ -1198,7 +1220,7 @@ async fn main() {
             300.0
         };
 
-        let target_zoom = if (state == AppState::Playing || matches!(state, AppState::Victory(_))) && physics.ball.pos.y < 130.0 {
+        let target_zoom = if allow_zoom && (state == AppState::Playing || matches!(state, AppState::Victory(_))) && physics.ball.pos.y < 130.0 {
             1.0 - ((130.0 - physics.ball.pos.y) / 450.0).clamp(0.0, 0.32)
         } else {
             1.0
@@ -1228,6 +1250,8 @@ async fn main() {
                 AppState::Victory(w) => Some(w),
                 _ => None,
             },
+            left_theme,
+            right_theme,
         };
 
         // 1. Render Arena Environment
@@ -1281,6 +1305,7 @@ async fn main() {
                     arena,
                     left_theme,
                     right_theme,
+                    config.high_ball_camera,
                     fullscreen,
                     menu_selected,
                     Some(virt_mouse),
@@ -1301,6 +1326,7 @@ async fn main() {
                     arena,
                     left_theme,
                     right_theme,
+                    config.high_ball_camera,
                     fullscreen,
                     menu_selected,
                     Some(virt_mouse),
@@ -1417,6 +1443,8 @@ async fn main() {
                     &right_title,
                     left_theme,
                     right_theme,
+                    physics.ball.pos,
+                    config.high_ball_camera,
                     global_time,
                     online_serve_countdown,
                 );
@@ -1429,7 +1457,17 @@ async fn main() {
                 } else {
                     player2_name.clone()
                 };
-                render_hud(&logic, &player1_name, &r_name, left_theme, right_theme, global_time, None);
+                render_hud(
+                    &logic,
+                    &player1_name,
+                    &r_name,
+                    left_theme,
+                    right_theme,
+                    physics.ball.pos,
+                    config.high_ball_camera,
+                    global_time,
+                    None,
+                );
                 render_pause_menu(pause_selected);
             }
             AppState::Victory(winner) => {

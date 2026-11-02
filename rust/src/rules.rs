@@ -121,7 +121,7 @@ impl GameLogic {
     }
 
     pub fn on_ball_hits_blob(&mut self, player: PlayerSide) {
-        if self.squish[player.index()] > 0 {
+        if self.squish[player.index()] > 0 || !self.is_ball_valid {
             return;
         }
 

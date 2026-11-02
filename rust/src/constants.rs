@@ -41,8 +41,8 @@ pub const NET_POSITION_Y: f32 = 438.0;
 pub const NET_RADIUS: f32 = 7.0;
 pub const NET_SPHERE_POSITION: f32 = 284.0; // Top round cap y
 
-// Hit tolerance frames
-pub const SQUISH_TOLERANCE: i32 = 11;
+// Hit tolerance frames: 25 ticks (~333ms) prevents multi-contact phantom touches on a single jump/header
+pub const SQUISH_TOLERANCE: i32 = 25;
 
 // Simulation rate: 75 updates per second
 pub const PHYSICS_TICK_RATE: f32 = 75.0;

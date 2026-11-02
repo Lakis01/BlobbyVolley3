@@ -15,7 +15,6 @@ pub enum GameMode {
     QuickMatch,
     TwoPlayerLocal,
     BotVsBot,
-    Leaderboard,
     HostOnline,
     JoinOnline,
     ServerBrowser,
@@ -28,7 +27,6 @@ impl GameMode {
             GameMode::QuickMatch => "Quick Match (Glicko-2 Ranked)",
             GameMode::TwoPlayerLocal => "2 Players (Local)",
             GameMode::BotVsBot => "CPU vs CPU",
-            GameMode::Leaderboard => "Global Leaderboards",
             GameMode::HostOnline => "Host Online Match",
             GameMode::JoinOnline => "Direct Connect (IP)",
             GameMode::ServerBrowser => "Public Server Browser",
@@ -40,8 +38,7 @@ impl GameMode {
             GameMode::SinglePlayer => GameMode::QuickMatch,
             GameMode::QuickMatch => GameMode::TwoPlayerLocal,
             GameMode::TwoPlayerLocal => GameMode::BotVsBot,
-            GameMode::BotVsBot => GameMode::Leaderboard,
-            GameMode::Leaderboard => GameMode::HostOnline,
+            GameMode::BotVsBot => GameMode::HostOnline,
             GameMode::HostOnline => GameMode::JoinOnline,
             GameMode::JoinOnline => GameMode::ServerBrowser,
             GameMode::ServerBrowser => GameMode::SinglePlayer,
@@ -54,8 +51,7 @@ impl GameMode {
             GameMode::QuickMatch => GameMode::SinglePlayer,
             GameMode::TwoPlayerLocal => GameMode::QuickMatch,
             GameMode::BotVsBot => GameMode::TwoPlayerLocal,
-            GameMode::Leaderboard => GameMode::BotVsBot,
-            GameMode::HostOnline => GameMode::Leaderboard,
+            GameMode::HostOnline => GameMode::BotVsBot,
             GameMode::JoinOnline => GameMode::HostOnline,
             GameMode::ServerBrowser => GameMode::JoinOnline,
         }
@@ -74,6 +70,7 @@ pub enum MenuItem {
     Arena,
     P1Color,
     P2Color,
+    HighBallCamera,
     Fullscreen,
 }
 
@@ -88,6 +85,7 @@ pub fn get_menu_items_for_mode(mode: GameMode) -> Vec<MenuItem> {
             MenuItem::PointsToWin,
             MenuItem::Arena,
             MenuItem::P1Color,
+            MenuItem::HighBallCamera,
             MenuItem::Fullscreen,
         ],
         GameMode::TwoPlayerLocal => vec![
@@ -99,6 +97,7 @@ pub fn get_menu_items_for_mode(mode: GameMode) -> Vec<MenuItem> {
             MenuItem::Arena,
             MenuItem::P1Color,
             MenuItem::P2Color,
+            MenuItem::HighBallCamera,
             MenuItem::Fullscreen,
         ],
         GameMode::QuickMatch => vec![
@@ -108,6 +107,7 @@ pub fn get_menu_items_for_mode(mode: GameMode) -> Vec<MenuItem> {
             MenuItem::MatchmakingRange,
             MenuItem::Arena,
             MenuItem::P1Color,
+            MenuItem::HighBallCamera,
             MenuItem::Fullscreen,
         ],
         GameMode::BotVsBot => vec![
@@ -119,6 +119,7 @@ pub fn get_menu_items_for_mode(mode: GameMode) -> Vec<MenuItem> {
             MenuItem::Arena,
             MenuItem::P1Color,
             MenuItem::P2Color,
+            MenuItem::HighBallCamera,
             MenuItem::Fullscreen,
         ],
         GameMode::HostOnline => vec![
@@ -129,12 +130,14 @@ pub fn get_menu_items_for_mode(mode: GameMode) -> Vec<MenuItem> {
             MenuItem::PointsToWin,
             MenuItem::Arena,
             MenuItem::P1Color,
+            MenuItem::HighBallCamera,
             MenuItem::Fullscreen,
         ],
-        GameMode::JoinOnline | GameMode::ServerBrowser | GameMode::Leaderboard => vec![
+        GameMode::JoinOnline | GameMode::ServerBrowser => vec![
             MenuItem::StartMatch,
             MenuItem::GameMode,
             MenuItem::PlayerProfile,
+            MenuItem::HighBallCamera,
             MenuItem::Fullscreen,
         ],
     }
@@ -150,9 +153,9 @@ pub struct MenuRowLayout {
 }
 
 pub fn get_main_menu_layout(items: &[MenuItem]) -> Vec<MenuRowLayout> {
-    let card_w = 660.0;
+    let card_w = 560.0;
     let card_h = 430.0;
-    let card_x = (VIRTUAL_WIDTH - card_w) * 0.5;
+    let card_x = 24.0;
     let card_y = 115.0;
 
     let num = items.len().max(1);
@@ -175,9 +178,9 @@ pub fn get_main_menu_layout(items: &[MenuItem]) -> Vec<MenuRowLayout> {
             });
         } else {
             // Settings row with distinct left and right arrow buttons
-            let btn_size = 25.0;
-            let left_btn = Rect::new(card_x + card_w - 275.0, y - btn_size * 0.5, btn_size, btn_size);
-            let right_btn = Rect::new(card_x + card_w - 40.0, y - btn_size * 0.5, btn_size, btn_size);
+            let btn_size = 24.0;
+            let left_btn = Rect::new(card_x + card_w - 270.0, y - btn_size * 0.5, btn_size, btn_size);
+            let right_btn = Rect::new(card_x + card_w - 32.0, y - btn_size * 0.5, btn_size, btn_size);
             rows.push(MenuRowLayout {
                 index: i,
                 item,
@@ -196,6 +199,8 @@ pub fn render_hud(
     right_name: &str,
     left_theme: BlobTheme,
     right_theme: BlobTheme,
+    ball_pos: Vec2,
+    high_ball_camera: usize,
     time: f32,
     serve_countdown: Option<f32>,
 ) {
@@ -323,6 +328,34 @@ pub fn render_hud(
             draw_text(&cd_str, cx + 12.0, cy + 18.0, 16.0, Color::new(1.0, 0.85, 0.2, pulse));
         }
     }
+
+    // Off-Screen High Ball Indicator
+    if ball_pos.y < 30.0 && (high_ball_camera == 0 || high_ball_camera == 2) {
+        let bx = ball_pos.x.clamp(25.0, VIRTUAL_WIDTH - 25.0);
+        let pulse = (time * 6.0).sin().abs() * 0.3 + 0.7;
+
+        // Vertical laser projection line from top of screen down into the court
+        draw_line(bx, 0.0, bx, 500.0, 1.5, Color::new(1.0, 0.85, 0.2, 0.22));
+
+        // Top edge downward pointer chevron
+        let chev_col = Color::new(1.0, 0.85, 0.15, pulse);
+        draw_triangle(
+            Vec2::new(bx - 12.0, 2.0),
+            Vec2::new(bx + 12.0, 2.0),
+            Vec2::new(bx, 15.0),
+            chev_col,
+        );
+
+        // Altitude badge readout if above view
+        let alt = (-ball_pos.y).max(0.0) as i32;
+        let alt_str = format!("▲ {}m", alt / 10);
+        let dim = measure_text(&alt_str, None, 12, 1.0);
+        let bw = dim.width + 12.0;
+        let bx_box = bx - bw * 0.5;
+        draw_rectangle(bx_box, 16.0, bw, 16.0, Color::new(0.06, 0.08, 0.15, 0.92));
+        draw_rectangle_lines(bx_box, 16.0, bw, 16.0, 1.0, Color::new(1.0, 0.8, 0.2, 0.85));
+        draw_text(&alt_str, bx_box + 6.0, 28.0, 12.0, Color::new(1.0, 0.95, 0.4, 1.0));
+    }
 }
 
 pub fn render_main_menu(
@@ -337,6 +370,7 @@ pub fn render_main_menu(
     arena: ArenaType,
     left_theme: BlobTheme,
     right_theme: BlobTheme,
+    high_ball_camera: usize,
     fullscreen: bool,
     selected_item: usize,
     virt_mouse: Option<Vec2>,
@@ -366,9 +400,9 @@ pub fn render_main_menu(
     );
 
     // Menu Card
-    let card_w = 660.0;
+    let card_w = 560.0;
     let card_h = 430.0;
-    let card_x = (VIRTUAL_WIDTH - card_w) * 0.5;
+    let card_x = 24.0;
     let card_y = 115.0;
 
     draw_rectangle(card_x, card_y, card_w, card_h, Color::new(0.08, 0.1, 0.18, 0.92));
@@ -392,7 +426,6 @@ pub fn render_main_menu(
                     GameMode::HostOnline => "HOST ONLINE ROOM  [ Press Space / Enter ]",
                     GameMode::JoinOnline => "JOIN ONLINE ROOM  [ Press Space / Enter ]",
                     GameMode::ServerBrowser => "OPEN SERVER BROWSER  [ Press Space / Enter ]",
-                    GameMode::Leaderboard => "VIEW GLOBAL LEADERBOARDS  [ Press Space / Enter ]",
                     _ => "START MATCH  [ Press Space / Enter ]",
                 };
                 (None, action_text.to_string())
@@ -406,6 +439,7 @@ pub fn render_main_menu(
             MenuItem::Arena => (Some("Arena:"), arena.name().to_string()),
             MenuItem::P1Color => (Some("P1 Color:"), left_theme.name().to_string()),
             MenuItem::P2Color => (Some("P2 Color:"), right_theme.name().to_string()),
+            MenuItem::HighBallCamera => (Some("High Ball Cam:"), crate::config::HighBallCamera::from_index(high_ball_camera).name().to_string()),
             MenuItem::Fullscreen => (Some("Fullscreen:"), if fullscreen { "ENABLED".to_string() } else { "DISABLED".to_string() }),
         };
 
@@ -498,6 +532,58 @@ pub fn render_main_menu(
             draw_text(&val, tx, text_y, 21.0, col);
         }
     }
+
+    // Color Preview Showcase Pod on the right of the menu
+    let pod_x = 600.0;
+    let pod_y = card_y;
+    let pod_w = 176.0;
+    let pod_h = card_h;
+
+    draw_rectangle(pod_x, pod_y, pod_w, pod_h, Color::new(0.08, 0.1, 0.18, 0.92));
+    draw_rectangle_lines(pod_x, pod_y, pod_w, pod_h, 1.5, Color::new(0.3, 0.5, 0.85, 0.5));
+
+    // Pod Header
+    let pod_title = "COLOR PREVIEW";
+    let pt_dim = measure_text(pod_title, None, 14, 1.0);
+    draw_text(pod_title, pod_x + (pod_w - pt_dim.width) * 0.5, pod_y + 22.0, 14.0, Color::new(0.2, 0.85, 1.0, 1.0));
+    draw_line(pod_x + 15.0, pod_y + 30.0, pod_x + pod_w - 15.0, pod_y + 30.0, 1.0, Color::new(0.3, 0.5, 0.85, 0.4));
+
+    let mouse_target = virt_mouse.unwrap_or(Vec2::new(pod_x - 100.0, pod_y + 200.0));
+
+    // Section 1: Player 1 Blob
+    let is_p1_active = items.get(selected_item) == Some(&MenuItem::P1Color);
+    let p1_label = format!("P1: {}", left_theme.name());
+    let p1_dim = measure_text(&p1_label, None, 12, 1.0);
+    draw_text(&p1_label, pod_x + (pod_w - p1_dim.width) * 0.5, pod_y + 48.0, 12.0, if is_p1_active { Color::new(1.0, 0.9, 0.3, 1.0) } else { Color::new(0.8, 0.85, 0.92, 0.85) });
+
+    let p1_center = Vec2::new(pod_x + pod_w * 0.5, pod_y + 120.0);
+    if is_p1_active {
+        let pulse = (time * 5.0).sin().abs() * 0.2 + 0.8;
+        draw_circle_lines(p1_center.x, p1_center.y - 10.0, 48.0, 1.5, Color::new(0.2, 0.85, 1.0, pulse * 0.7));
+    }
+    crate::render::blob::render_preview_blobby(p1_center, 1.15, PlayerSide::Left, left_theme, mouse_target, time);
+
+    // Section Divider
+    draw_line(pod_x + 20.0, pod_y + 215.0, pod_x + pod_w - 20.0, pod_y + 215.0, 1.0, Color::new(0.3, 0.5, 0.85, 0.35));
+
+    // Section 2: Player 2 / CPU Blob
+    let is_p2_active = items.get(selected_item) == Some(&MenuItem::P2Color);
+    let p2_prefix = if game_mode == GameMode::TwoPlayerLocal { "P2" } else { "CPU" };
+    let p2_label = format!("{}: {}", p2_prefix, right_theme.name());
+    let p2_dim = measure_text(&p2_label, None, 12, 1.0);
+    draw_text(&p2_label, pod_x + (pod_w - p2_dim.width) * 0.5, pod_y + 235.0, 12.0, if is_p2_active { Color::new(1.0, 0.9, 0.3, 1.0) } else { Color::new(0.8, 0.85, 0.92, 0.85) });
+
+    let p2_center = Vec2::new(pod_x + pod_w * 0.5, pod_y + 310.0);
+    if is_p2_active {
+        let pulse = (time * 5.0).sin().abs() * 0.2 + 0.8;
+        draw_circle_lines(p2_center.x, p2_center.y - 10.0, 48.0, 1.5, Color::new(0.2, 0.85, 1.0, pulse * 0.7));
+    }
+    crate::render::blob::render_preview_blobby(p2_center, 1.15, PlayerSide::Right, right_theme, mouse_target, time + 1.5);
+
+    // Footer note inside pod
+    let hint = "Animated Live Preview";
+    let hint_dim = measure_text(hint, None, 10, 1.0);
+    draw_text(hint, pod_x + (pod_w - hint_dim.width) * 0.5, pod_y + pod_h - 14.0, 10.0, Color::new(0.5, 0.6, 0.75, 0.7));
 
     // Footer Controls Guide
     let guide = "Controls: [Left/Right] Cycle | [Enter] Confirm & Start | [L] Leaderboards | [ESC] Quit Game | [F11] Fullscreen";

@@ -4,8 +4,9 @@ use glam::Vec2;
 use crate::physics::{Blobby, PlayerSide};
 use crate::constants::*;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum BlobTheme {
+    #[default]
     ElectricCyan,
     SunsetOrange,
     NeonMagenta,
@@ -238,6 +239,73 @@ pub fn render_blobby(
         ball_pos,
         time,
     );
+}
+
+/// Renders a standalone lively preview blobby (e.g. in menus/color picker)
+pub fn render_preview_blobby(
+    center: Vec2,
+    scale: f32,
+    side: PlayerSide,
+    theme: BlobTheme,
+    look_target: Vec2,
+    time: f32,
+) {
+    let breath = (time * 3.4).sin() * 0.045;
+    let sy = (1.0 + breath) * scale;
+    let sx = (1.0 / (1.0 + breath).max(0.2).sqrt()) * scale;
+
+    let base_x = center.x;
+    let base_y = center.y + (time * 2.8).sin() * (2.2 * scale); // Gentle floating idle bounce
+
+    let (core_color, shade_color, highlight_color) = theme.colors();
+
+    let top_y = -BLOBBY_UPPER_SPHERE * sy;
+    let top_r = BLOBBY_UPPER_RADIUS * sx;
+
+    let bot_y = BLOBBY_LOWER_SPHERE * sy;
+    let bot_r = BLOBBY_LOWER_RADIUS * sx;
+
+    // Pedestal contact shadow
+    let shadow_y = base_y + bot_y + bot_r * 0.95;
+    draw_ellipse(base_x, shadow_y, bot_r * 1.05, 5.0 * scale, 0.0, Color::new(0.0, 0.0, 0.0, 0.42));
+
+    // Outer contour
+    let num_points = 36;
+    let mut contour = Vec::with_capacity(num_points);
+    for i in 0..num_points {
+        let angle = (i as f32 / num_points as f32) * std::f32::consts::TAU;
+        let sin = angle.sin();
+        let cos = angle.cos();
+        let (cy, cr) = if sin < 0.0 { (top_y, top_r) } else { (bot_y, bot_r) };
+        let px = base_x + cos * cr;
+        let py = base_y + cy + sin * cr;
+        contour.push(Vec2::new(px, py));
+    }
+
+    draw_blobby_mesh(&contour, base_x, base_y + (top_y + bot_y) * 0.5, shade_color, core_color);
+
+    // Inner glow
+    let inner_points: Vec<Vec2> = contour
+        .iter()
+        .map(|p| {
+            let c = Vec2::new(base_x, base_y + (top_y + bot_y) * 0.5);
+            c + (*p - c) * 0.82
+        })
+        .collect();
+    draw_blobby_mesh(
+        &inner_points,
+        base_x,
+        base_y + (top_y + bot_y) * 0.5,
+        core_color,
+        Color::new(core_color.r * 1.15, core_color.g * 1.15, core_color.b * 1.15, 0.85),
+    );
+
+    // Specular curved highlight
+    let spec_center = Vec2::new(base_x - top_r * 0.32, base_y + top_y - top_r * 0.28);
+    draw_ellipse(spec_center.x, spec_center.y, top_r * 0.48, top_r * 0.28, -0.45, highlight_color);
+
+    // Eyes looking towards target
+    render_blobby_eyes(base_x, base_y + top_y * 0.92, top_r, side, look_target, time);
 }
 
 /// Renders a fan mesh representing the blobby jelly body with center gradient

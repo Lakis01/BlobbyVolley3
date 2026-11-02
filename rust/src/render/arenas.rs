@@ -5,12 +5,15 @@ use macroquad::prelude::*;
 use glam::Vec2;
 use crate::constants::*;
 use crate::physics::PlayerSide;
+use crate::render::blob::BlobTheme;
 
 #[derive(Debug, Clone, Copy, Default)]
 pub struct CheerState {
     pub last_scorer: Option<PlayerSide>,
     pub cheer_timer: f32,
     pub match_winner: Option<PlayerSide>,
+    pub left_theme: BlobTheme,
+    pub right_theme: BlobTheme,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -120,16 +123,18 @@ pub fn render_arena(arena: ArenaType, time: f32, view_x0: f32, view_w: f32, ball
 // 1. COPACABANA SUNSET BEACH (Modern Tropical Sunset with Parallax Vista)
 // =========================================================================
 fn render_sunset_beach(time: f32, x_left: f32, x_right: f32, full_w: f32) {
-    let sky_h = 420.0;
-    let bands = 16;
+    let sky_top = -500.0;
+    let sky_bot = 330.0;
+    let sky_h = sky_bot - sky_top;
+    let bands = 24;
     for i in 0..bands {
         let t = i as f32 / bands as f32;
-        let y = t * sky_h;
-        let h = sky_h / bands as f32 + 1.0;
+        let y = sky_top + t * sky_h;
+        let h = sky_h / bands as f32 + 1.5;
 
-        let r = 0.16 + t * 0.82;
-        let g = 0.06 + t * 0.48;
-        let b = 0.48 - t * 0.38;
+        let r = (0.08 + t * 0.90).min(1.0);
+        let g = (0.03 + t * 0.50).min(1.0);
+        let b = (0.35 - t * 0.25).max(0.0);
         draw_rectangle(x_left, y, full_w, h, Color::new(r, g, b, 1.0));
     }
 
@@ -219,40 +224,44 @@ fn render_sunset_beach(time: f32, x_left: f32, x_right: f32, full_w: f32) {
 // 2. BLOBBY GRAND ARENA (Premier World Championship Stadium with Spectators)
 // =========================================================================
 fn render_grand_stadium(time: f32, x_left: f32, x_right: f32, full_w: f32, ball_pos: Vec2, cheer: CheerState) {
-    // 1. Indoor Stadium Enclosed Ceiling Dome
-    let ceiling_h = 175.0;
-    for i in 0..10 {
-        let t = i as f32 / 10.0;
-        let y = t * ceiling_h;
-        let h = ceiling_h / 10.0 + 1.0;
-        let r = 0.05 + t * 0.07;
-        let g = 0.06 + t * 0.09;
-        let b = 0.12 + t * 0.15;
+    // 1. Indoor Stadium Enclosed Ceiling Dome extending into upper sky
+    let ceil_top = -500.0;
+    let ceil_bot = 175.0;
+    let ceil_h = ceil_bot - ceil_top;
+    for i in 0..16 {
+        let t = i as f32 / 16.0;
+        let y = ceil_top + t * ceil_h;
+        let h = ceil_h / 16.0 + 1.5;
+        let r = 0.03 + t * 0.09;
+        let g = 0.04 + t * 0.11;
+        let b = 0.08 + t * 0.19;
         draw_rectangle(x_left, y, full_w, h, Color::new(r, g, b, 1.0));
     }
 
-    // Steel Lattice Roof Truss Arches
-    let arch_y = 65.0;
-    draw_line(x_left, arch_y, x_right, arch_y, 3.0, Color::new(0.25, 0.32, 0.45, 0.85));
-    draw_line(x_left, arch_y + 18.0, x_right, arch_y + 18.0, 2.0, Color::new(0.18, 0.24, 0.35, 0.8));
-    let mut tx = x_left + 20.0;
-    while tx < x_right {
-        draw_line(tx, arch_y, tx + 25.0, arch_y + 18.0, 1.5, Color::new(0.25, 0.32, 0.45, 0.7));
-        draw_line(tx + 25.0, arch_y + 18.0, tx + 50.0, arch_y, 1.5, Color::new(0.25, 0.32, 0.45, 0.7));
-        tx += 50.0;
+    // Steel Lattice Roof Truss Arches extending upward
+    let lower_arch_y = 65.0;
+    for &arch_y in &[-350.0, -180.0, -20.0, lower_arch_y] {
+        draw_line(x_left, arch_y, x_right, arch_y, 3.0, Color::new(0.25, 0.32, 0.45, 0.85));
+        draw_line(x_left, arch_y + 18.0, x_right, arch_y + 18.0, 2.0, Color::new(0.18, 0.24, 0.35, 0.8));
+        let mut tx = x_left + 20.0;
+        while tx < x_right {
+            draw_line(tx, arch_y, tx + 25.0, arch_y + 18.0, 1.5, Color::new(0.25, 0.32, 0.45, 0.7));
+            draw_line(tx + 25.0, arch_y + 18.0, tx + 50.0, arch_y, 1.5, Color::new(0.25, 0.32, 0.45, 0.7));
+            tx += 50.0;
+        }
     }
 
     // Suspended Arena Sound System Speakers
-    draw_rectangle(180.0, arch_y + 18.0, 32.0, 18.0, Color::new(0.08, 0.1, 0.15, 0.95));
-    draw_rectangle(590.0, arch_y + 18.0, 32.0, 18.0, Color::new(0.08, 0.1, 0.15, 0.95));
+    draw_rectangle(180.0, lower_arch_y + 18.0, 32.0, 18.0, Color::new(0.08, 0.1, 0.15, 0.95));
+    draw_rectangle(590.0, lower_arch_y + 18.0, 32.0, 18.0, Color::new(0.08, 0.1, 0.15, 0.95));
 
     // 2. Twin Sideline Arena Display Boards (x: 40..220 and 580..760)
     // Placed on the stadium wings so the center court is 100% unobstructed for the HUD
     let screens = [(55.0, 78.0, 185.0, 68.0, "★ TEAM BLUE ★"), (560.0, 78.0, 185.0, 68.0, "★ TEAM RED ★")];
     for &(sx, sy, sw, sh, s_title) in &screens {
         // Cables from ceiling truss
-        draw_line(sx + 15.0, arch_y + 18.0, sx + 15.0, sy, 2.0, Color::new(0.15, 0.2, 0.28, 0.9));
-        draw_line(sx + sw - 15.0, arch_y + 18.0, sx + sw - 15.0, sy, 2.0, Color::new(0.15, 0.2, 0.28, 0.9));
+        draw_line(sx + 15.0, lower_arch_y + 18.0, sx + 15.0, sy, 2.0, Color::new(0.15, 0.2, 0.28, 0.9));
+        draw_line(sx + sw - 15.0, lower_arch_y + 18.0, sx + sw - 15.0, sy, 2.0, Color::new(0.15, 0.2, 0.28, 0.9));
 
         // Chassis Frame
         draw_rectangle(sx - 2.0, sy - 2.0, sw + 4.0, sh + 4.0, Color::new(0.08, 0.1, 0.15, 0.98));
@@ -326,14 +335,17 @@ fn render_grand_stadium(time: f32, x_left: f32, x_right: f32, full_w: f32, ball_
 // 3. NEO TOKYO CYBER STADIUM (Synthwave / Cyberpunk Full-Screen Grid with Cyber Crowd)
 // =========================================================================
 fn render_cyber_neon(time: f32, x_left: f32, x_right: f32, full_w: f32, ball_pos: Vec2, cheer: CheerState) {
-    let bands = 14;
+    let sky_top = -500.0;
+    let sky_bot = 240.0;
+    let sky_h = sky_bot - sky_top;
+    let bands = 20;
     for i in 0..bands {
         let t = i as f32 / bands as f32;
-        let y = t * 240.0;
-        let h = 240.0 / bands as f32 + 1.0;
-        let r = 0.06 + t * 0.35;
-        let g = 0.02 + t * 0.04;
-        let b = 0.16 + t * 0.42;
+        let y = sky_top + t * sky_h;
+        let h = sky_h / bands as f32 + 1.5;
+        let r = 0.02 + t * 0.38;
+        let g = 0.01 + t * 0.05;
+        let b = 0.08 + t * 0.50;
         draw_rectangle(x_left, y, full_w, h, Color::new(r, g, b, 1.0));
     }
 
@@ -413,14 +425,17 @@ fn render_cyber_neon(time: f32, x_left: f32, x_right: f32, full_w: f32, ball_pos
 // 4. OLYMPIC BEACH STADIUM (Open-Air Seaside Tournament Grandstands)
 // =========================================================================
 fn render_olympic_beach(time: f32, x_left: f32, x_right: f32, full_w: f32, ball_pos: Vec2, cheer: CheerState) {
-    // 1. Sunny Coastal Azure Sky
-    let sky_h = 240.0;
-    for i in 0..10 {
-        let t = i as f32 / 10.0;
-        let y = t * sky_h;
-        let h = sky_h / 10.0 + 1.0;
-        let r = 0.2 + t * 0.35;
-        let g = 0.55 + t * 0.35;
+    // 1. Sunny Coastal Azure Sky extending into upper sky
+    let sky_top = -500.0;
+    let sky_bot = 240.0;
+    let sky_h = sky_bot - sky_top;
+    let bands = 16;
+    for i in 0..bands {
+        let t = i as f32 / bands as f32;
+        let y = sky_top + t * sky_h;
+        let h = sky_h / bands as f32 + 1.5;
+        let r = 0.12 + t * 0.43;
+        let g = 0.40 + t * 0.50;
         let b = 0.95 + t * 0.05;
         draw_rectangle(x_left, y, full_w, h, Color::new(r, g, b, 1.0));
     }
@@ -514,13 +529,16 @@ fn render_olympic_beach(time: f32, x_left: f32, x_right: f32, full_w: f32, ball_
 // 3. CLASSIC BEACH HD (Nostalgic Sunny Sky & Crystal Ocean)
 // =========================================================================
 fn render_classic_remaster(time: f32, x_left: f32, x_right: f32, full_w: f32) {
-    let sky_h = 360.0;
-    for i in 0..12 {
-        let t = i as f32 / 12.0;
-        let y = t * sky_h;
-        let h = sky_h / 12.0 + 1.0;
-        let r = 0.22 + t * 0.48;
-        let g = 0.52 + t * 0.38;
+    let sky_top = -500.0;
+    let sky_bot = 360.0;
+    let sky_h = sky_bot - sky_top;
+    let bands = 18;
+    for i in 0..bands {
+        let t = i as f32 / bands as f32;
+        let y = sky_top + t * sky_h;
+        let h = sky_h / bands as f32 + 1.5;
+        let r = 0.15 + t * 0.55;
+        let g = 0.40 + t * 0.50;
         let b = 0.95 + t * 0.05;
         draw_rectangle(x_left, y, full_w, h, Color::new(r, g, b, 1.0));
     }
@@ -559,14 +577,17 @@ fn render_classic_remaster(time: f32, x_left: f32, x_right: f32, full_w: f32) {
 // 4. ALPINE PEAKS (Winter Glacier with Animated Aurora Borealis)
 // =========================================================================
 fn render_alpine_peaks(time: f32, x_left: f32, x_right: f32, full_w: f32) {
-    let sky_h = 360.0;
-    for i in 0..14 {
-        let t = i as f32 / 14.0;
-        let y = t * sky_h;
-        let h = sky_h / 14.0 + 1.0;
-        let r = 0.08 + t * 0.35;
-        let g = 0.15 + t * 0.45;
-        let b = 0.35 + t * 0.55;
+    let sky_top = -500.0;
+    let sky_bot = 360.0;
+    let sky_h = sky_bot - sky_top;
+    let bands = 20;
+    for i in 0..bands {
+        let t = i as f32 / bands as f32;
+        let y = sky_top + t * sky_h;
+        let h = sky_h / bands as f32 + 1.5;
+        let r = 0.04 + t * 0.38;
+        let g = 0.08 + t * 0.50;
+        let b = 0.22 + t * 0.65;
         draw_rectangle(x_left, y, full_w, h, Color::new(r, g, b, 1.0));
     }
 
@@ -655,14 +676,17 @@ fn render_alpine_peaks(time: f32, x_left: f32, x_right: f32, full_w: f32) {
 // 5. MAGMA CALDERA (Volcanic Magma Arena with Glowing Fissures)
 // =========================================================================
 fn render_magma_caldera(time: f32, x_left: f32, x_right: f32, full_w: f32) {
-    let sky_h = 360.0;
-    for i in 0..14 {
-        let t = i as f32 / 14.0;
-        let y = t * sky_h;
-        let h = sky_h / 14.0 + 1.0;
-        let r = 0.16 + t * 0.70;
-        let g = 0.03 + t * 0.18;
-        let b = 0.04 + t * 0.05;
+    let sky_top = -500.0;
+    let sky_bot = 360.0;
+    let sky_h = sky_bot - sky_top;
+    let bands = 20;
+    for i in 0..bands {
+        let t = i as f32 / bands as f32;
+        let y = sky_top + t * sky_h;
+        let h = sky_h / bands as f32 + 1.5;
+        let r = 0.08 + t * 0.78;
+        let g = 0.01 + t * 0.20;
+        let b = 0.02 + t * 0.06;
         draw_rectangle(x_left, y, full_w, h, Color::new(r, g, b, 1.0));
     }
 
@@ -731,18 +755,18 @@ fn render_magma_caldera(time: f32, x_left: f32, x_right: f32, full_w: f32) {
 // 6. ORBITAL STATION (Deep Space Zero-G Deck with Blue Earth Horizon)
 // =========================================================================
 fn render_orbital_station(time: f32, x_left: f32, x_right: f32, full_w: f32) {
-    // Deep cosmic space
-    draw_rectangle(x_left, 0.0, full_w, 420.0, Color::new(0.02, 0.02, 0.06, 1.0));
+    // Deep cosmic space extending into upper sky
+    draw_rectangle(x_left, -500.0, full_w, 920.0, Color::new(0.02, 0.02, 0.06, 1.0));
 
     // Cosmic nebula cloud
     draw_circle(250.0, 150.0, 170.0, Color::new(0.45, 0.1, 0.65, 0.14));
     draw_circle(580.0, 180.0, 150.0, Color::new(0.1, 0.4, 0.75, 0.16));
 
     // Starfield across full screen
-    for s in 0..65 {
+    for s in 0..85 {
         let seed = s as f32 * 17.13;
         let sx = x_left + (seed * 83.1) % full_w;
-        let sy = (seed * 47.7) % 330.0;
+        let sy = -500.0 + (seed * 47.7) % 830.0;
         let twinkle = ((time * 3.0 + seed).sin() * 0.4 + 0.6).clamp(0.1, 1.0);
         let sz = if s % 5 == 0 { 2.2 } else { 1.2 };
         draw_circle(sx, sy, sz, Color::new(0.9, 0.95, 1.0, twinkle));
@@ -814,14 +838,26 @@ fn render_court_boundaries(time: f32, arena: ArenaType) {
     draw_line(LEFT_PLANE, GROUND_PLANE_HEIGHT_MAX, RIGHT_PLANE, GROUND_PLANE_HEIGHT_MAX, 3.5, line_col);
 
     // 2. High-Tech Vertical Court Barrier Posts at x = 0.0 and x = 800.0
-    // Perfectly aligns with physical wall bounce planes, giving players crisp visual feedback
+    // Perfectly aligns with physical wall bounce planes, extending up into the sky so players have crisp visual feedback on high balls
+    let top_bounce_y = -500.0;
     let pulse = (time * 4.0).sin().abs() * 0.2 + 0.8;
-    draw_line(LEFT_PLANE, 0.0, LEFT_PLANE, GROUND_PLANE_HEIGHT_MAX, 2.5, Color::new(glow_col.r, glow_col.g, glow_col.b, glow_col.a * pulse));
-    draw_line(RIGHT_PLANE, 0.0, RIGHT_PLANE, GROUND_PLANE_HEIGHT_MAX, 2.5, Color::new(glow_col.r, glow_col.g, glow_col.b, glow_col.a * pulse));
+    draw_line(LEFT_PLANE, top_bounce_y, LEFT_PLANE, GROUND_PLANE_HEIGHT_MAX, 2.5, Color::new(glow_col.r, glow_col.g, glow_col.b, glow_col.a * pulse));
+    draw_line(RIGHT_PLANE, top_bounce_y, RIGHT_PLANE, GROUND_PLANE_HEIGHT_MAX, 2.5, Color::new(glow_col.r, glow_col.g, glow_col.b, glow_col.a * pulse));
 
     // Outer subtle glow halo
-    draw_line(LEFT_PLANE - 1.5, 0.0, LEFT_PLANE - 1.5, GROUND_PLANE_HEIGHT_MAX, 5.0, Color::new(glow_col.r, glow_col.g, glow_col.b, 0.15));
-    draw_line(RIGHT_PLANE + 1.5, 0.0, RIGHT_PLANE + 1.5, GROUND_PLANE_HEIGHT_MAX, 5.0, Color::new(glow_col.r, glow_col.g, glow_col.b, 0.15));
+    draw_line(LEFT_PLANE - 1.5, top_bounce_y, LEFT_PLANE - 1.5, GROUND_PLANE_HEIGHT_MAX, 5.0, Color::new(glow_col.r, glow_col.g, glow_col.b, 0.15));
+    draw_line(RIGHT_PLANE + 1.5, top_bounce_y, RIGHT_PLANE + 1.5, GROUND_PLANE_HEIGHT_MAX, 5.0, Color::new(glow_col.r, glow_col.g, glow_col.b, 0.15));
+
+    // Height indicator tick hashes along vertical bounce bars
+    let mut hash_y = top_bounce_y + 25.0;
+    while hash_y < GROUND_PLANE_HEIGHT_MAX {
+        let is_major = (hash_y as i32).abs() % 100 < 10;
+        let h_len = if is_major { 10.0 } else { 5.0 };
+        let h_alpha = if is_major { 0.45 } else { 0.25 };
+        draw_line(LEFT_PLANE, hash_y, LEFT_PLANE + h_len, hash_y, 1.2, Color::new(glow_col.r, glow_col.g, glow_col.b, h_alpha));
+        draw_line(RIGHT_PLANE - h_len, hash_y, RIGHT_PLANE, hash_y, 1.2, Color::new(glow_col.r, glow_col.g, glow_col.b, h_alpha));
+        hash_y += 50.0;
+    }
 
     // 3. Modern Tournament Floodlight Stanchions on Court Flanks
     let draw_floodlight_tower = |tx: f32, is_left: bool| {
@@ -1113,28 +1149,29 @@ fn render_stadium_crowd(
 
             // Fan Color Allocation reflecting team preference
             let fan_rand = ((col as f32 * 47.9 + r as f32 * 83.1).sin() * 12345.67).fract().abs();
-            let raw_col = match favored_side {
-                PlayerSide::Left => {
-                    match ((fan_rand * 10.0) as usize) % 5 {
-                        0 => Color::new(0.18, 0.65, 1.0, 1.0),
-                        1 => Color::new(0.2, 0.88, 0.45, 1.0),
-                        2 => Color::new(0.15, 0.95, 0.9, 1.0),
-                        3 => Color::new(0.35, 0.72, 1.0, 1.0),
-                        _ => Color::new(0.92, 0.95, 1.0, 1.0),
-                    }
-                }
-                PlayerSide::Right => {
-                    match ((fan_rand * 10.0) as usize) % 5 {
-                        0 => Color::new(0.98, 0.32, 0.32, 1.0),
-                        1 => Color::new(1.0, 0.58, 0.15, 1.0),
-                        2 => Color::new(1.0, 0.82, 0.2, 1.0),
-                        3 => Color::new(0.85, 0.3, 0.95, 1.0),
-                        _ => Color::new(1.0, 0.42, 0.7, 1.0),
-                    }
-                }
+            let team_theme = match favored_side {
+                PlayerSide::Left => cheer.left_theme,
+                PlayerSide::Right => cheer.right_theme,
+            };
+            let (team_top, team_bot, _highlight) = team_theme.colors();
+
+            // Depth attenuation
+            let depth = 0.74 + (r as f32 / num_rows as f32) * 0.26;
+
+            // Base body color: 65% team top/bot, 35% tinted fan variant
+            let raw_col = if fan_rand < 0.40 {
+                team_top
+            } else if fan_rand < 0.70 {
+                team_bot
+            } else {
+                Color::new(
+                    (team_top.r * 0.6 + 0.3).min(1.0),
+                    (team_top.g * 0.6 + 0.3).min(1.0),
+                    (team_top.b * 0.6 + 0.3).min(1.0),
+                    1.0,
+                )
             };
 
-            let depth = 0.74 + (r as f32 / num_rows as f32) * 0.26;
             let base_col = Color::new(raw_col.r * depth, raw_col.g * depth, raw_col.b * depth, 1.0);
 
             // Body Geometry
@@ -1154,6 +1191,21 @@ fn render_stadium_crowd(
 
             // Specular head highlight
             draw_circle(spec_x - head_r * 0.32, head_y - head_r * 0.32, head_r * 0.3, Color::new(1.0, 1.0, 1.0, 0.38 * depth));
+
+            // Team Clothing & Accessories (Scarves, Headbands) in Player's Colors
+            if fan_rand < 0.55 {
+                // Team Scarf around neck
+                let scarf_y = head_y + head_r * 0.62;
+                draw_line(spec_x - body_w * 0.72, scarf_y, spec_x + body_w * 0.72, scarf_y, 2.8 * scale, team_top);
+                // Scarf fluttering fringe
+                let flutter = (time * 4.5 + spec_x * 0.3).sin() * (2.2 * scale);
+                draw_line(spec_x + body_w * 0.35, scarf_y, spec_x + body_w * 0.55, scarf_y + 5.0 * scale + flutter, 2.0 * scale, team_bot);
+            } else if fan_rand < 0.85 {
+                // Team Headband across forehead
+                let band_y = head_y - head_r * 0.28;
+                draw_line(spec_x - head_r * 0.88, band_y, spec_x + head_r * 0.88, band_y, 2.2 * scale, team_top);
+                draw_circle(spec_x, band_y, 1.3 * scale, team_bot);
+            }
 
             // Cute Googly Eyes tracking Ball or downcast if rival scores
             let eye_y = head_y;
@@ -1205,32 +1257,41 @@ fn render_stadium_crowd(
                 draw_circle(spec_x + body_w * 0.95, spec_y - body_h * 0.72, 2.2 * scale, base_col);
             }
 
-            // Waving Fan Flags
-            if fan_rand > 0.85 || is_favored_winner {
+            // Waving Fan Flags & Signs in Player's Colors
+            if fan_rand > 0.78 || is_favored_winner || (is_favored_scorer && fan_rand > 0.45) {
                 let pole_x = spec_x + body_w * 0.85;
                 let pole_y1 = spec_y;
-                let pole_y0 = spec_y - 14.0 * scale;
-                draw_line(pole_x, pole_y1, pole_x, pole_y0, 1.2 * scale, Color::new(0.7, 0.75, 0.8, 0.8));
+                let pole_y0 = spec_y - 15.0 * scale;
+                draw_line(pole_x, pole_y1, pole_x, pole_y0, 1.2 * scale, Color::new(0.8, 0.82, 0.88, 0.85));
                 let flag_speed = if is_cheering { 16.0 } else { 8.0 };
                 let flap = (time * flag_speed + spec_x * 0.2).sin() * (2.8 * scale);
-                draw_triangle(
-                    Vec2::new(pole_x, pole_y0),
-                    Vec2::new(pole_x + 9.5 * scale, pole_y0 + 3.2 * scale + flap),
-                    Vec2::new(pole_x, pole_y0 + 6.5 * scale),
-                    base_col,
-                );
+
+                if fan_rand > 0.88 {
+                    // Waving Pennant Flag
+                    draw_triangle(
+                        Vec2::new(pole_x, pole_y0),
+                        Vec2::new(pole_x + 10.5 * scale, pole_y0 + 3.5 * scale + flap),
+                        Vec2::new(pole_x, pole_y0 + 7.0 * scale),
+                        team_top,
+                    );
+                    draw_circle(pole_x + 3.5 * scale, pole_y0 + 3.5 * scale + flap * 0.4, 1.5 * scale, team_bot);
+                } else {
+                    // Cheering Placard / Sign
+                    let sign_w = 12.0 * scale;
+                    let sign_h = 7.0 * scale;
+                    let sign_x = pole_x - 2.0 * scale;
+                    let sign_y = pole_y0 - sign_h + flap * 0.4;
+                    draw_rectangle(sign_x, sign_y, sign_w, sign_h, team_top);
+                    draw_rectangle_lines(sign_x, sign_y, sign_w, sign_h, 1.0, team_bot);
+                    draw_circle(sign_x + sign_w * 0.5, sign_y + sign_h * 0.5, 1.6 * scale, team_bot);
+                }
             }
 
-            // Cyberpunk Glowsticks
+            // Cyberpunk Glowsticks in Team Accent
             if style == CrowdStyle::Cyberpunk && fan_rand < 0.22 {
                 let stick_x = spec_x + 5.0 * scale;
                 let flap = (time * 4.0 + spec_x).sin() * (4.0 * scale);
-                let g_col = if fan_rand < 0.11 {
-                    Color::new(0.2, 1.0, 0.85, 0.9)
-                } else {
-                    Color::new(1.0, 0.25, 0.85, 0.9)
-                };
-                draw_line(stick_x, spec_y - 2.0 * scale, stick_x + 6.0 * scale, spec_y - 12.0 * scale + flap, 2.0 * scale, g_col);
+                draw_line(stick_x, spec_y - 2.0 * scale, stick_x + 6.0 * scale, spec_y - 12.0 * scale + flap, 2.0 * scale, team_top);
             }
         }
     }
