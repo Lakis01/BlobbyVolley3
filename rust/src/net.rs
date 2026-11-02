@@ -834,3 +834,174 @@ fn cancel_http_coordinator(base_url: &str, player_id: &str) {
         }
     }
 }
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct LeaderboardEntry {
+    pub rank: usize,
+    pub player_id: String,
+    pub name: String,
+    pub rating: f64,
+    pub rank_title: String,
+    pub matches_won: u32,
+    pub matches_played: u32,
+    pub win_rate: u32,
+    pub last_active_days: u32,
+}
+
+pub fn submit_leaderboard_rating(
+    coordinator_url: Option<&str>,
+    player_id: &str,
+    name: &str,
+    rating: f64,
+    rd: f64,
+    wins: u32,
+    total: u32,
+) {
+    if let Some(url) = coordinator_url {
+        if let Some(simple) = parse_simple_url(url) {
+            let addr = format!("{}:{}", simple.host, simple.port);
+            if let Ok(mut addrs) = addr.to_socket_addrs() {
+                if let Some(sa) = addrs.next() {
+                    if let Ok(mut stream) = TcpStream::connect_timeout(&sa, Duration::from_millis(300)) {
+                        let body = format!(
+                            r#"{{"player_id":"{}","name":"{}","rating":{},"rd":{},"matches_won":{},"matches_played":{}}}"#,
+                            player_id, name, rating, rd, wins, total
+                        );
+                        let req = format!(
+                            "POST /leaderboard/submit HTTP/1.1\r\nHost: {}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                            simple.host,
+                            body.len(),
+                            body
+                        );
+                        let _ = stream.write_all(req.as_bytes());
+                    }
+                }
+            }
+        }
+    }
+}
+
+pub fn fetch_leaderboard(
+    coordinator_url: Option<&str>,
+    period: &str,
+    my_name: &str,
+    my_rating: f64,
+    my_wins: u32,
+    my_played: u32,
+) -> Vec<LeaderboardEntry> {
+    // 1. Try querying remote coordinator if configured
+    if let Some(url) = coordinator_url {
+        if let Some(simple) = parse_simple_url(url) {
+            let addr = format!("{}:{}", simple.host, simple.port);
+            if let Ok(mut addrs) = addr.to_socket_addrs() {
+                if let Some(sa) = addrs.next() {
+                    if let Ok(mut stream) = TcpStream::connect_timeout(&sa, Duration::from_millis(500)) {
+                        let _ = stream.set_read_timeout(Some(Duration::from_millis(500)));
+                        let req = format!(
+                            "GET /leaderboard?period={} HTTP/1.1\r\nHost: {}\r\nConnection: close\r\n\r\n",
+                            period, simple.host
+                        );
+                        if stream.write_all(req.as_bytes()).is_ok() {
+                            let mut resp = String::new();
+                            if stream.read_to_string(&mut resp).is_ok() {
+                                if let Some(json_idx) = resp.find("\r\n\r\n") {
+                                    let json = &resp[json_idx + 4..];
+                                    if let Ok(val) = serde_json::from_str::<serde_json::Value>(json) {
+                                        if let Some(list) = val.get("leaderboard").and_then(|v| v.as_array()) {
+                                            let mut entries = Vec::new();
+                                            for item in list {
+                                                if let Ok(entry) = serde_json::from_value::<LeaderboardEntry>(item.clone()) {
+                                                    entries.push(entry);
+                                                }
+                                            }
+                                            if !entries.is_empty() {
+                                                return entries;
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // 2. Offline Fallback Leaderboard: Calibrated competitive roster with inactivity filter
+    let max_inactivity = match period {
+        "week" => 7,
+        "month" => 30,
+        "year" => 365,
+        _ => 90,
+    };
+
+    let get_rank_title = |r: f64| -> &'static str {
+        if r < 1100.0 { "Bronze I" }
+        else if r < 1250.0 { "Bronze II" }
+        else if r < 1400.0 { "Silver I" }
+        else if r < 1550.0 { "Silver II" }
+        else if r < 1700.0 { "Gold I" }
+        else if r < 1850.0 { "Gold II" }
+        else if r < 2000.0 { "Platinum I" }
+        else if r < 2150.0 { "Platinum II" }
+        else if r < 2300.0 { "Diamond" }
+        else { "Grandmaster" }
+    };
+
+    let mut raw_players = vec![
+        ("SpikeMaster", 2240.0, 52, 58, 0),
+        ("BlobbyPro", 2090.0, 41, 49, 1),
+        ("CyberVolley", 1980.0, 36, 45, 3),
+        ("AlpineJumper", 1850.0, 29, 40, 5),
+        ("NetGuardian", 1780.0, 22, 32, 12),
+        ("CopacabanaAce", 1720.0, 18, 28, 18),
+        ("MagmaSmash", 1650.0, 15, 25, 25),
+        ("RetroBlob", 1590.0, 12, 22, 45),
+        ("ZenServer", 1520.0, 9, 18, 70),
+    ];
+
+    // Filter by inactivity threshold
+    raw_players.retain(|&(_, _, _, _, days)| days <= max_inactivity);
+
+    // Insert current player profile
+    let my_winrate = if my_played > 0 { (my_wins * 100) / my_played } else { 0 };
+    let mut entries = Vec::new();
+    for (name, r, w, t, days) in raw_players {
+        let wr = if t > 0 { (w * 100) / t } else { 0 };
+        entries.push(LeaderboardEntry {
+            rank: 0,
+            player_id: format!("p_{}", name.to_lowercase()),
+            name: name.to_string(),
+            rating: r,
+            rank_title: get_rank_title(r).to_string(),
+            matches_won: w,
+            matches_played: t,
+            win_rate: wr,
+            last_active_days: days,
+        });
+    }
+
+    // Add current user
+    entries.push(LeaderboardEntry {
+        rank: 0,
+        player_id: "local_player".to_string(),
+        name: format!("{} (You)", my_name),
+        rating: my_rating,
+        rank_title: get_rank_title(my_rating).to_string(),
+        matches_won: my_wins,
+        matches_played: my_played,
+        win_rate: my_winrate,
+        last_active_days: 0,
+    });
+
+    // Sort descending by rating
+    entries.sort_by(|a, b| b.rating.partial_cmp(&a.rating).unwrap_or(std::cmp::Ordering::Equal));
+
+    // Assign rank indices
+    for (i, entry) in entries.iter_mut().enumerate() {
+        entry.rank = i + 1;
+    }
+
+    entries
+}

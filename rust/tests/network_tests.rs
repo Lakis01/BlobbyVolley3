@@ -159,3 +159,32 @@ fn test_glicko2_rank_advancement() {
     assert!(player.rating > 1650.0, "Rating should advance past 1650 after 3 wins against higher rated players");
     assert!(player.deviation < 200.0, "Rating deviation should reduce (higher certainty)");
 }
+
+#[test]
+fn test_leaderboard_inactivity_and_filtering() {
+    use blobby_core::net::fetch_leaderboard;
+
+    // 1. Fetch Weekly leaderboard (max 7 days inactivity)
+    let week_entries = fetch_leaderboard(None, "week", "Tester", 1700.0, 10, 15);
+    assert!(!week_entries.is_empty(), "Weekly leaderboard should have entries");
+    for entry in &week_entries {
+        assert!(entry.last_active_days <= 7, "All players in weekly leaderboard must be active within 7 days, got {} for {}", entry.last_active_days, entry.name);
+    }
+
+    // 2. Fetch Monthly leaderboard (max 30 days inactivity)
+    let month_entries = fetch_leaderboard(None, "month", "Tester", 1700.0, 10, 15);
+    assert!(month_entries.len() >= week_entries.len(), "Monthly leaderboard must contain at least as many players as Weekly");
+    for entry in &month_entries {
+        assert!(entry.last_active_days <= 30, "All players in monthly leaderboard must be active within 30 days");
+    }
+
+    // 3. Fetch Yearly leaderboard (max 365 days inactivity)
+    let year_entries = fetch_leaderboard(None, "year", "Tester", 1700.0, 10, 15);
+    assert!(year_entries.len() >= month_entries.len(), "Yearly leaderboard must contain players active up to 365 days");
+
+    // 4. Verify ranking order (descending by rating)
+    for i in 1..month_entries.len() {
+        assert!(month_entries[i - 1].rating >= month_entries[i].rating, "Entries must be sorted by rating descending");
+        assert_eq!(month_entries[i].rank, i + 1, "Rank number must match position");
+    }
+}

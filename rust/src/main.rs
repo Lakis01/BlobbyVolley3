@@ -20,7 +20,7 @@ use rules::{GameLogic, RuleMode};
 use ai::{BotController, AiDifficulty};
 use audio::AudioManager;
 use vfx::VfxManager;
-use net::{NetworkHost, NetworkClient, NetEvent, ServerEntry, query_master_server, get_local_ip, DEFAULT_PORT, QuickMatchAgent, MatchmakingStatus};
+use net::{NetworkHost, NetworkClient, NetEvent, ServerEntry, query_master_server, get_local_ip, DEFAULT_PORT, QuickMatchAgent, MatchmakingStatus, LeaderboardEntry, fetch_leaderboard, submit_leaderboard_rating};
 use render::blob::{render_blobby, BlobTheme};
 use render::ball::{render_ball, BallTrail};
 use render::net::NetRenderer;
@@ -32,6 +32,8 @@ use glicko::GlickoRating;
 #[derive(Debug, Clone, PartialEq)]
 enum AppState {
     MainMenu,
+    ExitConfirm,
+    Leaderboard { period_idx: usize, entries: Vec<LeaderboardEntry>, is_refreshing: bool },
     PlayerSetup { is_two_player: bool, active_field: usize },
     HostLobby,
     JoinScreen,
@@ -55,6 +57,13 @@ fn window_conf() -> Conf {
 
 #[macroquad::main(window_conf)]
 async fn main() {
+    // High-resolution TrueType typography (replaces Macroquad's low-res ProggyClean bitmap)
+    let font_bytes = include_bytes!("../assets/fonts/Roboto-Bold.ttf");
+    if let Ok(mut font) = load_ttf_font_from_bytes(font_bytes) {
+        font.set_filter(miniquad::FilterMode::Linear);
+        set_default_font(font);
+    }
+
     let mut config = UserConfig::load();
 
     let mut audio = AudioManager::new().await;
@@ -292,6 +301,28 @@ async fn main() {
                     }
                 }
 
+                if is_key_pressed(KeyCode::Escape) {
+                    state = AppState::ExitConfirm;
+                    audio.play_ball_hit(0.2);
+                }
+
+                if is_key_pressed(KeyCode::L) {
+                    let entries = fetch_leaderboard(
+                        config.matchmaking_registry_url.as_deref(),
+                        "month",
+                        &player1_name,
+                        config.glicko.rating,
+                        config.matches_won,
+                        config.matches_played,
+                    );
+                    state = AppState::Leaderboard {
+                        period_idx: 1,
+                        entries,
+                        is_refreshing: false,
+                    };
+                    audio.play_ball_hit(0.3);
+                }
+
                 if action_open_profile {
                     state = AppState::PlayerSetup {
                         is_two_player: game_mode == GameMode::TwoPlayerLocal,
@@ -370,6 +401,23 @@ async fn main() {
                                 is_refreshing: false,
                             };
                         }
+                        GameMode::Leaderboard => {
+                            active_match_opponent = None;
+                            let entries = fetch_leaderboard(
+                                config.matchmaking_registry_url.as_deref(),
+                                "month",
+                                &player1_name,
+                                config.glicko.rating,
+                                config.matches_won,
+                                config.matches_played,
+                            );
+                            state = AppState::Leaderboard {
+                                period_idx: 1,
+                                entries,
+                                is_refreshing: false,
+                            };
+                            audio.play_ball_hit(0.3);
+                        }
                         GameMode::BotVsBot => {
                             active_match_opponent = None;
                             logic = GameLogic::new(rule_mode, score_to_win);
@@ -385,6 +433,103 @@ async fn main() {
                             audio.play_whistle();
                         }
                     }
+                }
+            }
+
+            AppState::ExitConfirm => {
+                if is_key_pressed(KeyCode::Enter) || is_key_pressed(KeyCode::Y) {
+                    std::process::exit(0);
+                }
+                if is_key_pressed(KeyCode::Escape) || is_key_pressed(KeyCode::N) || is_key_pressed(KeyCode::Backspace) {
+                    state = AppState::MainMenu;
+                    audio.play_ball_hit(0.2);
+                }
+
+                if is_mouse_button_pressed(MouseButton::Left) {
+                    let card_w = 480.0;
+                    let card_h = 240.0;
+                    let card_x = (VIRTUAL_WIDTH - card_w) * 0.5;
+                    let card_y = (VIRTUAL_HEIGHT - card_h) * 0.5;
+                    let btn1_rect = Rect::new(card_x + 40.0, card_y + 125.0, 185.0, 44.0);
+                    let btn2_rect = Rect::new(card_x + 255.0, card_y + 125.0, 185.0, 44.0);
+
+                    if btn1_rect.contains(virt_mouse) {
+                        std::process::exit(0);
+                    } else if btn2_rect.contains(virt_mouse) {
+                        state = AppState::MainMenu;
+                        audio.play_ball_hit(0.2);
+                    }
+                }
+            }
+
+            AppState::Leaderboard { ref mut period_idx, ref mut entries, ref mut is_refreshing } => {
+                let mut period_changed = false;
+
+                if is_key_pressed(KeyCode::Left) || is_key_pressed(KeyCode::A) {
+                    *period_idx = if *period_idx == 0 { 2 } else { *period_idx - 1 };
+                    period_changed = true;
+                }
+                if is_key_pressed(KeyCode::Right) || is_key_pressed(KeyCode::D) {
+                    *period_idx = (*period_idx + 1) % 3;
+                    period_changed = true;
+                }
+                if is_key_pressed(KeyCode::Key1) {
+                    *period_idx = 0;
+                    period_changed = true;
+                }
+                if is_key_pressed(KeyCode::Key2) {
+                    *period_idx = 1;
+                    period_changed = true;
+                }
+                if is_key_pressed(KeyCode::Key3) {
+                    *period_idx = 2;
+                    period_changed = true;
+                }
+
+                if is_mouse_button_pressed(MouseButton::Left) {
+                    let _card_w = 720.0;
+                    let card_h = 490.0;
+                    let card_y = (VIRTUAL_HEIGHT - card_h) * 0.5;
+                    let tab_w = 170.0;
+                    let tab_h = 28.0;
+                    let tab_spacing = 20.0;
+                    let start_tab_x = (VIRTUAL_WIDTH - (tab_w * 3.0 + tab_spacing * 2.0)) * 0.5;
+                    let tab_y = card_y + 74.0;
+
+                    for i in 0..3 {
+                        let tx = start_tab_x + i as f32 * (tab_w + tab_spacing);
+                        let tab_rect = Rect::new(tx, tab_y, tab_w, tab_h);
+                        if tab_rect.contains(virt_mouse) && *period_idx != i {
+                            *period_idx = i;
+                            period_changed = true;
+                            audio.play_ball_hit(0.2);
+                            break;
+                        }
+                    }
+                }
+
+                if period_changed || is_key_pressed(KeyCode::R) {
+                    *is_refreshing = true;
+                    let p_str = match *period_idx {
+                        0 => "week",
+                        1 => "month",
+                        _ => "year",
+                    };
+                    *entries = fetch_leaderboard(
+                        config.matchmaking_registry_url.as_deref(),
+                        p_str,
+                        &player1_name,
+                        config.glicko.rating,
+                        config.matches_won,
+                        config.matches_played,
+                    );
+                    *is_refreshing = false;
+                    audio.play_ball_hit(0.2);
+                }
+
+                if is_key_pressed(KeyCode::Escape) {
+                    state = AppState::MainMenu;
+                    audio.play_ball_hit(0.2);
                 }
             }
 
@@ -683,6 +828,15 @@ async fn main() {
                             }
                             config.glicko = new_rating;
                             config.save();
+                            submit_leaderboard_rating(
+                                config.matchmaking_registry_url.as_deref(),
+                                "local_player",
+                                &player1_name,
+                                new_rating.rating,
+                                new_rating.deviation,
+                                config.matches_won,
+                                config.matches_played,
+                            );
                             last_rating_update = Some((old_r, new_rating.rating, new_rating.rank_title()));
                         } else {
                             last_rating_update = None;
@@ -789,6 +943,15 @@ async fn main() {
                                     }
                                     config.glicko = new_rating;
                                     config.save();
+                                    submit_leaderboard_rating(
+                                        config.matchmaking_registry_url.as_deref(),
+                                        "local_player",
+                                        &player1_name,
+                                        new_rating.rating,
+                                        new_rating.deviation,
+                                        config.matches_won,
+                                        config.matches_played,
+                                    );
                                     last_rating_update = Some((old_r, new_rating.rating, new_rating.rank_title()));
                                 } else {
                                     last_rating_update = None;
@@ -871,7 +1034,7 @@ async fn main() {
         });
 
         // 1. Render Arena Environment
-        render_arena(arena, global_time);
+        render_arena(arena, global_time, cam_x0, cam_w);
 
         // 2. Render Volleyball Net
         net_renderer.render(global_time);
@@ -922,6 +1085,26 @@ async fn main() {
                     Some(virt_mouse),
                     global_time,
                 );
+            }
+            AppState::ExitConfirm => {
+                render_main_menu(
+                    game_mode,
+                    &player1_name,
+                    difficulty,
+                    rule_mode,
+                    score_to_win,
+                    arena,
+                    left_theme,
+                    right_theme,
+                    fullscreen,
+                    menu_selected,
+                    Some(virt_mouse),
+                    global_time,
+                );
+                render_exit_confirm(global_time);
+            }
+            AppState::Leaderboard { period_idx, ref entries, is_refreshing } => {
+                render_leaderboard(period_idx, entries, &player1_name, is_refreshing, global_time);
             }
             AppState::PlayerSetup { is_two_player, active_field } => {
                 render_player_setup(&player1_name, &player2_name, is_two_player, active_field, global_time);

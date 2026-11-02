@@ -6,7 +6,7 @@ use crate::render::blob::BlobTheme;
 use crate::ai::AiDifficulty;
 use crate::render::arenas::ArenaType;
 use crate::constants::*;
-use crate::net::ServerEntry;
+use crate::net::{ServerEntry, LeaderboardEntry};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum GameMode {
@@ -14,6 +14,7 @@ pub enum GameMode {
     QuickMatch,
     TwoPlayerLocal,
     BotVsBot,
+    Leaderboard,
     HostOnline,
     JoinOnline,
     ServerBrowser,
@@ -26,6 +27,7 @@ impl GameMode {
             GameMode::QuickMatch => "Quick Match (Glicko-2 Ranked)",
             GameMode::TwoPlayerLocal => "2 Players (Local)",
             GameMode::BotVsBot => "CPU vs CPU",
+            GameMode::Leaderboard => "Global Leaderboards",
             GameMode::HostOnline => "Host Online Match",
             GameMode::JoinOnline => "Direct Connect (IP)",
             GameMode::ServerBrowser => "Public Server Browser",
@@ -37,7 +39,8 @@ impl GameMode {
             GameMode::SinglePlayer => GameMode::QuickMatch,
             GameMode::QuickMatch => GameMode::TwoPlayerLocal,
             GameMode::TwoPlayerLocal => GameMode::BotVsBot,
-            GameMode::BotVsBot => GameMode::HostOnline,
+            GameMode::BotVsBot => GameMode::Leaderboard,
+            GameMode::Leaderboard => GameMode::HostOnline,
             GameMode::HostOnline => GameMode::JoinOnline,
             GameMode::JoinOnline => GameMode::ServerBrowser,
             GameMode::ServerBrowser => GameMode::SinglePlayer,
@@ -50,7 +53,8 @@ impl GameMode {
             GameMode::QuickMatch => GameMode::SinglePlayer,
             GameMode::TwoPlayerLocal => GameMode::QuickMatch,
             GameMode::BotVsBot => GameMode::TwoPlayerLocal,
-            GameMode::HostOnline => GameMode::BotVsBot,
+            GameMode::Leaderboard => GameMode::BotVsBot,
+            GameMode::HostOnline => GameMode::Leaderboard,
             GameMode::JoinOnline => GameMode::HostOnline,
             GameMode::ServerBrowser => GameMode::JoinOnline,
         }
@@ -348,7 +352,7 @@ pub fn render_main_menu(
     }
 
     // Footer Controls Guide
-    let guide = "Controls: [Left/Right] or Click [< / >] to cycle | [Enter/Click Row] to Confirm & Start | [F11] Fullscreen";
+    let guide = "Controls: [Left/Right] Cycle | [Enter] Confirm & Start | [L] Leaderboards | [ESC] Quit Game | [F11] Fullscreen";
     let guide_dim = measure_text(guide, None, 13, 1.0);
     draw_text(
         guide,
@@ -879,4 +883,222 @@ pub fn render_victory_screen(
         18.0,
         Color::new(0.2, 0.9, 1.0, pulse),
     );
+}
+
+pub fn render_exit_confirm(time: f32) {
+    // Backdrop dark overlay
+    draw_rectangle(0.0, 0.0, VIRTUAL_WIDTH, VIRTUAL_HEIGHT, Color::new(0.02, 0.03, 0.07, 0.8));
+
+    let card_w = 480.0;
+    let card_h = 240.0;
+    let card_x = (VIRTUAL_WIDTH - card_w) * 0.5;
+    let card_y = (VIRTUAL_HEIGHT - card_h) * 0.5;
+
+    // Glassmorphism card
+    draw_rectangle(card_x, card_y, card_w, card_h, Color::new(0.08, 0.1, 0.18, 0.96));
+    draw_rectangle_lines(card_x, card_y, card_w, card_h, 2.0, Color::new(1.0, 0.45, 0.2, 0.85));
+
+    // Top glow line
+    draw_line(
+        card_x + 10.0,
+        card_y + 1.0,
+        card_x + card_w - 10.0,
+        card_y + 1.0,
+        2.0,
+        Color::new(1.0, 0.55, 0.2, 0.9),
+    );
+
+    // Title & prompt
+    let title = "QUIT BLOBBY VOLLEY 3?";
+    let title_dim = measure_text(title, None, 28, 1.0);
+    draw_text(title, (VIRTUAL_WIDTH - title_dim.width) * 0.5, card_y + 52.0, 28.0, Color::new(1.0, 0.65, 0.2, 1.0));
+
+    let sub = "Are you sure you want to exit to desktop?";
+    let sub_dim = measure_text(sub, None, 16, 1.0);
+    draw_text(sub, (VIRTUAL_WIDTH - sub_dim.width) * 0.5, card_y + 85.0, 16.0, Color::new(0.85, 0.88, 0.95, 0.85));
+
+    // Action buttons
+    let pulse = (time * 4.0).sin().abs() * 0.15 + 0.85;
+
+    // Button 1: Quit [ Enter ]
+    let btn1_rect = Rect::new(card_x + 40.0, card_y + 125.0, 185.0, 44.0);
+    draw_rectangle(btn1_rect.x, btn1_rect.y, btn1_rect.w, btn1_rect.h, Color::new(0.65, 0.15, 0.15, 0.85));
+    draw_rectangle_lines(btn1_rect.x, btn1_rect.y, btn1_rect.w, btn1_rect.h, 1.5, Color::new(1.0, 0.35, 0.35, pulse));
+    let t1 = "YES, QUIT [ Enter ]";
+    let t1_dim = measure_text(t1, None, 15, 1.0);
+    draw_text(t1, btn1_rect.x + (btn1_rect.w - t1_dim.width) * 0.5, btn1_rect.y + 27.0, 15.0, WHITE);
+
+    // Button 2: Resume [ Esc ]
+    let btn2_rect = Rect::new(card_x + 255.0, card_y + 125.0, 185.0, 44.0);
+    draw_rectangle(btn2_rect.x, btn2_rect.y, btn2_rect.w, btn2_rect.h, Color::new(0.12, 0.28, 0.45, 0.85));
+    draw_rectangle_lines(btn2_rect.x, btn2_rect.y, btn2_rect.w, btn2_rect.h, 1.5, Color::new(0.3, 0.85, 1.0, 0.85));
+    let t2 = "CANCEL [ ESC ]";
+    let t2_dim = measure_text(t2, None, 15, 1.0);
+    draw_text(t2, btn2_rect.x + (btn2_rect.w - t2_dim.width) * 0.5, btn2_rect.y + 27.0, 15.0, Color::new(0.4, 0.95, 1.0, 1.0));
+
+    // Helpful hint
+    let hint = "Tip: Progress & Glicko ratings are always saved automatically";
+    let hint_dim = measure_text(hint, None, 13, 1.0);
+    draw_text(hint, (VIRTUAL_WIDTH - hint_dim.width) * 0.5, card_y + 205.0, 13.0, Color::new(0.6, 0.7, 0.8, 0.75));
+}
+
+pub fn render_leaderboard(
+    period_idx: usize, // 0 = Week, 1 = Month, 2 = Year
+    entries: &[LeaderboardEntry],
+    my_name: &str,
+    is_refreshing: bool,
+    time: f32,
+) {
+    draw_rectangle(0.0, 0.0, VIRTUAL_WIDTH, VIRTUAL_HEIGHT, Color::new(0.04, 0.05, 0.1, 0.92));
+
+    let card_w = 720.0;
+    let card_h = 490.0;
+    let card_x = (VIRTUAL_WIDTH - card_w) * 0.5;
+    let card_y = (VIRTUAL_HEIGHT - card_h) * 0.5;
+
+    // Card frame
+    draw_rectangle(card_x, card_y, card_w, card_h, Color::new(0.08, 0.1, 0.18, 0.96));
+    draw_rectangle_lines(card_x, card_y, card_w, card_h, 2.0, Color::new(0.2, 0.85, 1.0, 0.8));
+
+    // Header Glow Line
+    draw_line(card_x + 10.0, card_y + 1.0, card_x + card_w - 10.0, card_y + 1.0, 2.0, Color::new(0.3, 0.9, 1.0, 0.95));
+
+    // Title
+    let title = "GLOBAL COMPETITIVE LEADERBOARDS";
+    let title_dim = measure_text(title, None, 28, 1.0);
+    draw_text(title, (VIRTUAL_WIDTH - title_dim.width) * 0.5, card_y + 38.0, 28.0, Color::new(0.3, 0.9, 1.0, 1.0));
+
+    // Subtitle
+    let sub = "Live Glicko-2 Elo Rankings | Automatic Inactivity Drop-off System";
+    let sub_dim = measure_text(sub, None, 13, 1.0);
+    draw_text(sub, (VIRTUAL_WIDTH - sub_dim.width) * 0.5, card_y + 58.0, 13.0, Color::new(0.8, 0.85, 0.95, 0.8));
+
+    // Period Tabs: [ 1. THIS WEEK ] [ 2. THIS MONTH ] [ 3. THIS YEAR ]
+    let tab_w = 170.0;
+    let tab_h = 28.0;
+    let tab_spacing = 20.0;
+    let start_tab_x = (VIRTUAL_WIDTH - (tab_w * 3.0 + tab_spacing * 2.0)) * 0.5;
+    let tab_y = card_y + 74.0;
+
+    let periods = [
+        ("1. THIS WEEK (7d)", "Active within 7 days"),
+        ("2. THIS MONTH (30d)", "Active within 30 days"),
+        ("3. THIS YEAR (365d)", "Active within 1 year"),
+    ];
+
+    for (i, (tab_title, _)) in periods.iter().enumerate() {
+        let is_sel = i == period_idx;
+        let tx = start_tab_x + i as f32 * (tab_w + tab_spacing);
+
+        let bg_col = if is_sel {
+            Color::new(0.18, 0.55, 0.9, 0.75)
+        } else {
+            Color::new(0.08, 0.12, 0.22, 0.8)
+        };
+        let border_col = if is_sel {
+            Color::new(0.3, 0.95, 1.0, 1.0)
+        } else {
+            Color::new(0.25, 0.35, 0.5, 0.5)
+        };
+
+        draw_rectangle(tx, tab_y, tab_w, tab_h, bg_col);
+        draw_rectangle_lines(tx, tab_y, tab_w, tab_h, 1.5, border_col);
+
+        let dim = measure_text(tab_title, None, 14, 1.0);
+        let txt_col = if is_sel { WHITE } else { Color::new(0.7, 0.75, 0.85, 0.8) };
+        draw_text(tab_title, tx + (tab_w - dim.width) * 0.5, tab_y + 19.0, 14.0, txt_col);
+    }
+
+    // Table Header
+    let table_y = card_y + 120.0;
+    draw_rectangle(card_x + 18.0, table_y - 12.0, card_w - 36.0, 26.0, Color::new(0.12, 0.16, 0.26, 0.9));
+    draw_text("RANK", card_x + 30.0, table_y + 6.0, 14.0, Color::new(0.4, 0.9, 1.0, 1.0));
+    draw_text("PLAYER NAME", card_x + 95.0, table_y + 6.0, 14.0, Color::new(0.4, 0.9, 1.0, 1.0));
+    draw_text("DIVISION", card_x + 280.0, table_y + 6.0, 14.0, Color::new(0.4, 0.9, 1.0, 1.0));
+    draw_text("RATING (ELO)", card_x + 420.0, table_y + 6.0, 14.0, Color::new(0.4, 0.9, 1.0, 1.0));
+    draw_text("WIN RATE", card_x + 540.0, table_y + 6.0, 14.0, Color::new(0.4, 0.9, 1.0, 1.0));
+    draw_text("LAST ACTIVE", card_x + 630.0, table_y + 6.0, 14.0, Color::new(0.4, 0.9, 1.0, 1.0));
+
+    // Rows
+    let row_h = 31.0;
+    let list_start_y = table_y + 24.0;
+
+    if is_refreshing {
+        let msg = "Refreshing global rankings...";
+        let dim = measure_text(msg, None, 18, 1.0);
+        draw_text(msg, (VIRTUAL_WIDTH - dim.width) * 0.5, list_start_y + 100.0, 18.0, Color::new(0.3, 0.9, 1.0, 1.0));
+    } else if entries.is_empty() {
+        let msg = "No active players in this period. Press R to refresh.";
+        let dim = measure_text(msg, None, 16, 1.0);
+        draw_text(msg, (VIRTUAL_WIDTH - dim.width) * 0.5, list_start_y + 100.0, 16.0, Color::new(0.7, 0.75, 0.85, 0.8));
+    } else {
+        for (i, entry) in entries.iter().take(9).enumerate() {
+            let ry = list_start_y + i as f32 * row_h;
+            let is_me = entry.name.contains(my_name) || entry.name.contains("(You)");
+
+            if is_me {
+                let pulse = (time * 4.0).sin().abs() * 0.15 + 0.85;
+                draw_rectangle(card_x + 18.0, ry - 7.0, card_w - 36.0, 27.0, Color::new(0.15, 0.45, 0.85, 0.4 * pulse));
+                draw_rectangle_lines(card_x + 18.0, ry - 7.0, card_w - 36.0, 27.0, 1.5, Color::new(0.2, 0.9, 1.0, 0.9));
+            } else if i % 2 == 1 {
+                draw_rectangle(card_x + 18.0, ry - 7.0, card_w - 36.0, 27.0, Color::new(0.05, 0.08, 0.14, 0.5));
+            }
+
+            // Rank Medal / Number
+            let rank_str = format!("#{}", entry.rank);
+            let rank_col = match entry.rank {
+                1 => Color::new(1.0, 0.85, 0.2, 1.0), // Gold
+                2 => Color::new(0.85, 0.9, 0.98, 1.0), // Silver
+                3 => Color::new(0.88, 0.55, 0.25, 1.0), // Bronze
+                _ => Color::new(0.7, 0.75, 0.85, 0.85),
+            };
+            draw_text(&rank_str, card_x + 30.0, ry + 12.0, 15.0, rank_col);
+
+            // Player Name
+            let name_col = if is_me { Color::new(1.0, 0.95, 0.35, 1.0) } else { WHITE };
+            draw_text(&entry.name, card_x + 95.0, ry + 12.0, 15.0, name_col);
+
+            // Division Title
+            let tier_col = match entry.rank_title.as_str() {
+                "Grandmaster" => Color::new(1.0, 0.3, 0.3, 1.0),
+                "Diamond" => Color::new(0.4, 0.9, 1.0, 1.0),
+                "Platinum I" | "Platinum II" => Color::new(0.2, 1.0, 0.7, 1.0),
+                "Gold I" | "Gold II" => Color::new(1.0, 0.85, 0.25, 1.0),
+                "Silver I" | "Silver II" => Color::new(0.85, 0.88, 0.95, 1.0),
+                _ => Color::new(0.8, 0.55, 0.3, 1.0),
+            };
+            draw_text(&entry.rank_title, card_x + 280.0, ry + 12.0, 14.0, tier_col);
+
+            // Rating
+            let r_str = format!("{:.0}", entry.rating);
+            draw_text(&r_str, card_x + 420.0, ry + 12.0, 15.0, Color::new(1.0, 0.95, 0.45, 1.0));
+
+            // Win Rate
+            let wr_str = format!("{}% ({}W)", entry.win_rate, entry.matches_won);
+            draw_text(&wr_str, card_x + 540.0, ry + 12.0, 14.0, Color::new(0.75, 0.85, 0.95, 0.9));
+
+            // Last Active
+            let active_str = if entry.last_active_days == 0 {
+                "Today".to_string()
+            } else if entry.last_active_days == 1 {
+                "1d ago".to_string()
+            } else {
+                format!("{}d ago", entry.last_active_days)
+            };
+            draw_text(&active_str, card_x + 630.0, ry + 12.0, 14.0, Color::new(0.65, 0.75, 0.85, 0.75));
+        }
+    }
+
+    // Inactivity notice banner
+    let notice_y = card_y + card_h - 60.0;
+    draw_rectangle(card_x + 25.0, notice_y, card_w - 50.0, 24.0, Color::new(0.05, 0.08, 0.15, 0.8));
+    draw_rectangle_lines(card_x + 25.0, notice_y, card_w - 50.0, 24.0, 1.0, Color::new(0.2, 0.5, 0.8, 0.4));
+    let notice = "Inactivity Rules: Players drop off after 7 days (Weekly), 30 days (Monthly), 90 days (All-Time)";
+    let n_dim = measure_text(notice, None, 13, 1.0);
+    draw_text(notice, (VIRTUAL_WIDTH - n_dim.width) * 0.5, notice_y + 16.0, 13.0, Color::new(0.75, 0.85, 0.95, 0.85));
+
+    // Footer prompt
+    let footer = "[ Left / Right / 1-3 ] Switch Period | [ R ] Refresh | [ ESC ] Return to Main Menu";
+    let f_dim = measure_text(footer, None, 14, 1.0);
+    draw_text(footer, (VIRTUAL_WIDTH - f_dim.width) * 0.5, card_y + card_h - 16.0, 14.0, Color::new(0.3, 0.9, 1.0, 0.9));
 }
