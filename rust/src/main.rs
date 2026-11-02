@@ -123,6 +123,7 @@ async fn main() {
     let mut cheer_timer: f32 = 0.0;
     let mut cam_target_y = 300.0 - 35.0;
     let mut cam_zoom_factor = 1.0;
+    let mut is_dragging_court_slider = false;
 
     // Helper closure to save configuration
     let save_config = |cfg: &mut UserConfig,
@@ -158,6 +159,9 @@ async fn main() {
             if *cd <= 0.0 {
                 online_serve_countdown = None;
             }
+        }
+        if is_mouse_button_released(MouseButton::Left) {
+            is_dragging_court_slider = false;
         }
 
         // Viewport coordinate transformation for virtual 800x600 resolution
@@ -244,9 +248,14 @@ async fn main() {
                                 logic.score_to_win = score_to_win;
                             }
                             render::ui::MenuItem::CourtSize => {
-                                let cur_cs = crate::config::CourtSize::from_index(config.court_size);
-                                let new_cs = if $forward { cur_cs.next() } else { cur_cs.prev() };
-                                config.court_size = new_cs.to_index();
+                                let step = 0.05;
+                                if $forward {
+                                    config.court_width_factor = (config.court_width_factor + step).min(1.0);
+                                } else {
+                                    config.court_width_factor = (config.court_width_factor - step).max(0.0);
+                                }
+                                config.court_width_factor = (config.court_width_factor * 20.0).round() / 20.0;
+                                config.court_size = (config.court_width_factor * 3.0).round() as usize;
                             }
                             render::ui::MenuItem::Arena => arena = if $forward { arena.next() } else { arena.prev() },
                             render::ui::MenuItem::P1Color => {
@@ -303,6 +312,18 @@ async fn main() {
                     }
                 }
 
+                // Slider dragging update
+                if is_dragging_court_slider && is_mouse_button_down(MouseButton::Left) {
+                    if let Some(layout) = layouts.iter().find(|l| l.item == render::ui::MenuItem::CourtSize) {
+                        if let Some(s_rect) = layout.slider_rect {
+                            let factor = ((virt_mouse.x - s_rect.x) / s_rect.w).clamp(0.0, 1.0);
+                            config.court_width_factor = (factor * 100.0).round() / 100.0;
+                            config.court_size = (config.court_width_factor * 3.0).round() as usize;
+                            config.save();
+                        }
+                    }
+                }
+
                 // Mouse click handler
                 let mouse_clicked = is_mouse_button_pressed(MouseButton::Left);
                 let mut action_start_match = false;
@@ -330,7 +351,20 @@ async fn main() {
                                 continue;
                             }
                         }
-                        // 3. Check Row Body (outside arrow buttons)
+                        // 3. Check Slider Track (Schieberegler)
+                        if let Some(s_rect) = layout.slider_rect {
+                            if s_rect.contains(virt_mouse) {
+                                menu_selected = i;
+                                is_dragging_court_slider = true;
+                                let factor = ((virt_mouse.x - s_rect.x) / s_rect.w).clamp(0.0, 1.0);
+                                config.court_width_factor = (factor * 100.0).round() / 100.0;
+                                config.court_size = (config.court_width_factor * 3.0).round() as usize;
+                                config.save();
+                                audio.play_ball_hit(0.15);
+                                continue;
+                            }
+                        }
+                        // 4. Check Row Body (outside arrow buttons and slider)
                         if layout.row_rect.contains(virt_mouse) {
                             menu_selected = i;
                             if item == render::ui::MenuItem::PlayerProfile {
@@ -421,7 +455,7 @@ async fn main() {
                             let (cpu_r, cpu_rd) = GlickoRating::ai_baseline(difficulty);
                             active_match_opponent = Some((format!("CPU ({})", difficulty.name()), cpu_r, cpu_rd, "".to_string()));
                             logic = GameLogic::new(rule_mode, score_to_win);
-                            let court_w = crate::config::CourtSize::from_index(config.court_size).width();
+                            let court_w = config.get_court_width(aspect);
                             physics = PhysicWorld::new_with_width(court_w);
                             physics.reset_players();
                             physics.reset_ball(Some(PlayerSide::Left));
@@ -465,7 +499,7 @@ async fn main() {
                         GameMode::BotVsBot => {
                             active_match_opponent = None;
                             logic = GameLogic::new(rule_mode, score_to_win);
-                            let court_w = crate::config::CourtSize::from_index(config.court_size).width();
+                            let court_w = config.get_court_width(aspect);
                             physics = PhysicWorld::new_with_width(court_w);
                             physics.reset_players();
                             physics.reset_ball(Some(PlayerSide::Left));
@@ -655,7 +689,7 @@ async fn main() {
 
                     // Launch match
                     logic = GameLogic::new(rule_mode, score_to_win);
-                    let court_w = crate::config::CourtSize::from_index(config.court_size).width();
+                    let court_w = config.get_court_width(aspect);
                     physics = PhysicWorld::new_with_width(court_w);
                     physics.reset_players();
                     physics.reset_ball(Some(PlayerSide::Left));
@@ -1217,7 +1251,7 @@ async fn main() {
         clear_background(Color::new(0.05, 0.05, 0.08, 1.0));
 
         // Dynamic camera zoom out for high balls & shifted 2D scenery down
-        let allow_zoom = config.high_ball_camera != 0; // 0 = Indicator (rock-solid camera), 1 = DynamicZoom, 2 = Both
+        let allow_zoom = config.high_ball_camera == 1; // 0 = Indicator (rock-solid camera), 1 = DynamicZoom
         let target_cam_y = if state == AppState::Playing || matches!(state, AppState::Victory(_)) {
             if allow_zoom && physics.ball.pos.y < 150.0 {
                 (265.0 - (150.0 - physics.ball.pos.y) * 0.45).max(160.0)
@@ -1316,7 +1350,8 @@ async fn main() {
                     EloSearchRange::from_index(config.elo_search_range),
                     rule_mode,
                     score_to_win,
-                    config.court_size,
+                    config.court_width_factor,
+                    aspect,
                     arena,
                     left_theme,
                     right_theme,
@@ -1338,7 +1373,8 @@ async fn main() {
                     EloSearchRange::from_index(config.elo_search_range),
                     rule_mode,
                     score_to_win,
-                    config.court_size,
+                    config.court_width_factor,
+                    aspect,
                     arena,
                     left_theme,
                     right_theme,

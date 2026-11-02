@@ -29,9 +29,19 @@ pub struct UserConfig {
     #[serde(default = "default_elo_range")]
     pub elo_search_range: usize,
     #[serde(default)]
-    pub high_ball_camera: usize, // 0 = Indicator, 1 = DynamicZoom, 2 = Both
+    pub high_ball_camera: usize, // 0 = Indicator, 1 = DynamicZoom
     #[serde(default)]
-    pub court_size: usize,       // 0 = Standard (800px), 1 = Wide (960px), 2 = ExtraWide (1120px), 3 = Colossal (1280px)
+    pub court_size: usize,       // Legacy discrete index
+    #[serde(default)]
+    pub court_width_factor: f32, // 0.0 = Standard (800px), 1.0 = Max (Window/Screen borders)
+}
+
+impl UserConfig {
+    pub fn get_court_width(&self, aspect: f32) -> f32 {
+        let max_w = (600.0 * aspect).max(800.0);
+        let factor = self.court_width_factor.clamp(0.0, 1.0);
+        (800.0 + (max_w - 800.0) * factor).round()
+    }
 }
 
 pub fn default_elo_range() -> usize {
@@ -418,10 +428,12 @@ impl Default for UserConfig {
             elo_search_range: 1, // Balanced (±100)
             high_ball_camera: 0, // Off-Screen Indicator by default
             court_size: 0,       // Standard (800px) by default
+            court_width_factor: 0.0, // Standard (800px) by default
         }
     }
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CourtSize {
     Standard,  // 800.0 px
@@ -430,6 +442,7 @@ pub enum CourtSize {
     Colossal,  // 1280.0 px (+60%)
 }
 
+#[allow(dead_code)]
 impl CourtSize {
     pub fn width(self) -> f32 {
         match self {
@@ -490,7 +503,6 @@ impl CourtSize {
 pub enum HighBallCamera {
     Indicator,   // Rock-solid fixed camera + top-edge HUD indicator tracking X position
     DynamicZoom, // Smooth dynamic zoom-out tracking ball in high arc
-    Both,        // Dynamic zoom + top-edge HUD indicator
 }
 
 impl HighBallCamera {
@@ -498,14 +510,12 @@ impl HighBallCamera {
         match self {
             HighBallCamera::Indicator => "Off-Screen Indicator",
             HighBallCamera::DynamicZoom => "Dynamic Zoom",
-            HighBallCamera::Both => "Zoom + Indicator",
         }
     }
 
     pub fn from_index(idx: usize) -> Self {
         match idx {
             1 => HighBallCamera::DynamicZoom,
-            2 => HighBallCamera::Both,
             _ => HighBallCamera::Indicator,
         }
     }
@@ -514,24 +524,18 @@ impl HighBallCamera {
         match self {
             HighBallCamera::Indicator => 0,
             HighBallCamera::DynamicZoom => 1,
-            HighBallCamera::Both => 2,
         }
     }
 
     pub fn next(self) -> Self {
         match self {
             HighBallCamera::Indicator => HighBallCamera::DynamicZoom,
-            HighBallCamera::DynamicZoom => HighBallCamera::Both,
-            HighBallCamera::Both => HighBallCamera::Indicator,
+            HighBallCamera::DynamicZoom => HighBallCamera::Indicator,
         }
     }
 
     pub fn prev(self) -> Self {
-        match self {
-            HighBallCamera::Indicator => HighBallCamera::Both,
-            HighBallCamera::DynamicZoom => HighBallCamera::Indicator,
-            HighBallCamera::Both => HighBallCamera::DynamicZoom,
-        }
+        self.next()
     }
 }
 

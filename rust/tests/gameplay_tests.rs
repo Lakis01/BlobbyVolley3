@@ -439,17 +439,53 @@ fn test_high_ball_camera_enum_and_config() {
 
     assert_eq!(HighBallCamera::Indicator.to_index(), 0);
     assert_eq!(HighBallCamera::DynamicZoom.to_index(), 1);
-    assert_eq!(HighBallCamera::Both.to_index(), 2);
 
     assert_eq!(HighBallCamera::from_index(0), HighBallCamera::Indicator);
     assert_eq!(HighBallCamera::from_index(1), HighBallCamera::DynamicZoom);
-    assert_eq!(HighBallCamera::from_index(2), HighBallCamera::Both);
+    assert_eq!(HighBallCamera::from_index(99), HighBallCamera::Indicator); // Safe fallback
 
+    // Strict binary toggle: Indicator <-> DynamicZoom
     assert_eq!(HighBallCamera::Indicator.next(), HighBallCamera::DynamicZoom);
-    assert_eq!(HighBallCamera::DynamicZoom.next(), HighBallCamera::Both);
-    assert_eq!(HighBallCamera::Both.next(), HighBallCamera::Indicator);
+    assert_eq!(HighBallCamera::DynamicZoom.next(), HighBallCamera::Indicator);
 
-    assert_eq!(HighBallCamera::Indicator.prev(), HighBallCamera::Both);
+    assert_eq!(HighBallCamera::Indicator.prev(), HighBallCamera::DynamicZoom);
+    assert_eq!(HighBallCamera::DynamicZoom.prev(), HighBallCamera::Indicator);
+}
+
+#[test]
+fn test_court_width_slider_and_screen_border_scaling() {
+    use blobby_core::config::UserConfig;
+
+    let mut cfg = UserConfig::default();
+    assert_eq!(cfg.court_width_factor, 0.0);
+
+    // 1. Default factor (0.0) is always 800.0 px across all aspect ratios
+    assert_eq!(cfg.get_court_width(1.3333334), 800.0); // 4:3
+    assert_eq!(cfg.get_court_width(1.6), 800.0);       // 16:10 (User's device: 2560x1600)
+    assert_eq!(cfg.get_court_width(1.7777778), 800.0); // 16:9
+    assert_eq!(cfg.get_court_width(2.3333333), 800.0); // 21:9 Ultrawide
+
+    // 2. Max factor (1.0) reaches exact window / screen borders
+    cfg.court_width_factor = 1.0;
+    // 4:3: 600 * (4/3) = 800.0 -> max(800) = 800.0
+    assert_eq!(cfg.get_court_width(4.0 / 3.0), 800.0);
+    // 16:10: 600 * 1.6 = 960.0
+    assert_eq!(cfg.get_court_width(1.6), 960.0);
+    // 16:9: 600 * (16/9) = 1066.666... -> rounded to 1067.0
+    assert_eq!(cfg.get_court_width(16.0 / 9.0), 1067.0);
+    // 21:9: 600 * (21/9) = 1400.0
+    assert_eq!(cfg.get_court_width(21.0 / 9.0), 1400.0);
+
+    // 3. Continuous Schieberegler interpolation (e.g. 50% between default and screen border)
+    cfg.court_width_factor = 0.5;
+    // On 16:10: 800.0 + (960.0 - 800.0) * 0.5 = 880.0
+    assert_eq!(cfg.get_court_width(1.6), 880.0);
+
+    // 4. Clamping safety
+    cfg.court_width_factor = -0.5;
+    assert_eq!(cfg.get_court_width(1.6), 800.0);
+    cfg.court_width_factor = 1.5;
+    assert_eq!(cfg.get_court_width(1.6), 960.0);
 }
 
 #[test]

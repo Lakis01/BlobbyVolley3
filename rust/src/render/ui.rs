@@ -154,6 +154,7 @@ pub struct MenuRowLayout {
     pub row_rect: Rect,
     pub left_arrow_rect: Option<Rect>,
     pub right_arrow_rect: Option<Rect>,
+    pub slider_rect: Option<Rect>,
 }
 
 pub fn get_main_menu_layout(items: &[MenuItem]) -> Vec<MenuRowLayout> {
@@ -179,6 +180,24 @@ pub fn get_main_menu_layout(items: &[MenuItem]) -> Vec<MenuRowLayout> {
                 row_rect,
                 left_arrow_rect: None,
                 right_arrow_rect: None,
+                slider_rect: None,
+            });
+        } else if item == MenuItem::CourtSize {
+            // Schieberegler (Slider) row with left/right fine-tuning buttons and central slider track
+            let btn_size = 24.0;
+            let left_btn = Rect::new(card_x + card_w - 270.0, y - btn_size * 0.5, btn_size, btn_size);
+            let right_btn = Rect::new(card_x + card_w - 32.0, y - btn_size * 0.5, btn_size, btn_size);
+            let track_x = left_btn.x + btn_size + 6.0;
+            let track_w = right_btn.x - track_x - 6.0;
+            let track_h = 24.0;
+            let slider_rect = Rect::new(track_x, y - track_h * 0.5, track_w, track_h);
+            rows.push(MenuRowLayout {
+                index: i,
+                item,
+                row_rect,
+                left_arrow_rect: Some(left_btn),
+                right_arrow_rect: Some(right_btn),
+                slider_rect: Some(slider_rect),
             });
         } else {
             // Settings row with distinct left and right arrow buttons
@@ -191,6 +210,7 @@ pub fn get_main_menu_layout(items: &[MenuItem]) -> Vec<MenuRowLayout> {
                 row_rect,
                 left_arrow_rect: Some(left_btn),
                 right_arrow_rect: Some(right_btn),
+                slider_rect: None,
             });
         }
     }
@@ -334,8 +354,8 @@ pub fn render_hud(
         }
     }
 
-    // Off-Screen High Ball Indicator
-    if ball_pos.y < 30.0 && (high_ball_camera == 0 || high_ball_camera == 2) {
+    // Off-Screen High Ball Indicator (only active in Indicator mode: 0)
+    if ball_pos.y < 30.0 && high_ball_camera == 0 {
         let norm_x = (ball_pos.x / court_width) * VIRTUAL_WIDTH;
         let bx = norm_x.clamp(25.0, VIRTUAL_WIDTH - 25.0);
         let pulse = (time * 6.0).sin().abs() * 0.3 + 0.7;
@@ -373,7 +393,8 @@ pub fn render_main_menu(
     elo_range: EloSearchRange,
     rule_mode: RuleMode,
     score_to_win: i32,
-    court_size: usize,
+    court_width_factor: f32,
+    aspect: f32,
     arena: ArenaType,
     left_theme: BlobTheme,
     right_theme: BlobTheme,
@@ -383,6 +404,9 @@ pub fn render_main_menu(
     virt_mouse: Option<Vec2>,
     time: f32,
 ) {
+    let max_court_w = (600.0 * aspect).max(800.0);
+    let current_court_width = (800.0 + (max_court_w - 800.0) * court_width_factor.clamp(0.0, 1.0)).round();
+
     // Backdrop dimming
     draw_rectangle(0.0, 0.0, VIRTUAL_WIDTH, VIRTUAL_HEIGHT, Color::new(0.04, 0.05, 0.1, 0.72));
 
@@ -443,7 +467,16 @@ pub fn render_main_menu(
             MenuItem::MatchmakingRange => (Some("Matchmaking Range:"), elo_range.name().to_string()),
             MenuItem::Rules => (Some("Rules:"), rule_mode.name().to_string()),
             MenuItem::PointsToWin => (Some("Points to Win:"), format!("{}", score_to_win)),
-            MenuItem::CourtSize => (Some("Court Width:"), crate::config::CourtSize::from_index(court_size).name().to_string()),
+            MenuItem::CourtSize => {
+                let lbl = if court_width_factor <= 0.01 {
+                    "Court Width (Default):"
+                } else if court_width_factor >= 0.99 {
+                    "Court Width (Screen Borders):"
+                } else {
+                    "Court Width:"
+                };
+                (Some(lbl), format!("{:.0}px", current_court_width))
+            }
             MenuItem::Arena => (Some("Arena:"), arena.name().to_string()),
             MenuItem::P1Color => (Some("P1 Color:"), left_theme.name().to_string()),
             MenuItem::P2Color => (Some("P2 Color:"), right_theme.name().to_string()),
@@ -516,8 +549,52 @@ pub fn render_main_menu(
                 draw_text(">", r_rect.x + 8.0, r_rect.y + 19.0, 20.0, if is_hovered { WHITE } else { Color::new(0.3, 0.9, 1.0, 0.9) });
             }
 
-            // Value text centered between the two arrow buttons
-            if let (Some(l_rect), Some(r_rect)) = (layout.left_arrow_rect, layout.right_arrow_rect) {
+            // Value representation between arrow buttons
+            if let Some(s_rect) = layout.slider_rect {
+                // Interactive Schieberegler (Slider)
+                let bar_h = 6.0;
+                let bar_y = s_rect.y + (s_rect.h - bar_h) * 0.5 + 4.0;
+                let track_x = s_rect.x;
+                let track_w = s_rect.w;
+
+                // Value readout centered above slider track
+                let val_str = if court_width_factor <= 0.01 {
+                    "800px (Default)".to_string()
+                } else if court_width_factor >= 0.99 {
+                    format!("{:.0}px (Window Border)", current_court_width)
+                } else {
+                    format!("{:.0}px (+{:.0}%)", current_court_width, court_width_factor * 100.0)
+                };
+                let val_dim = measure_text(&val_str, None, 13, 1.0);
+                draw_text(
+                    &val_str,
+                    track_x + (track_w - val_dim.width) * 0.5,
+                    s_rect.y + 4.0,
+                    13.0,
+                    if is_selected { Color::new(1.0, 0.95, 0.4, 1.0) } else { Color::new(0.85, 0.9, 1.0, 0.9) },
+                );
+
+                // Track Slot Background
+                draw_rectangle(track_x, bar_y, track_w, bar_h, Color::new(0.1, 0.14, 0.22, 0.95));
+                draw_rectangle_lines(track_x, bar_y, track_w, bar_h, 1.0, Color::new(0.25, 0.4, 0.6, 0.7));
+
+                // Illuminated Active Progress Bar
+                let fill_w = track_w * court_width_factor.clamp(0.0, 1.0);
+                if fill_w > 0.0 {
+                    draw_rectangle(track_x, bar_y, fill_w, bar_h, Color::new(0.2, 0.85, 1.0, 0.9));
+                }
+
+                // Slider Thumb Knob (Schieberegler handle)
+                let thumb_x = track_x + fill_w;
+                let thumb_y = bar_y + bar_h * 0.5;
+                let is_track_hovered = virt_mouse.map_or(false, |m| s_rect.contains(m));
+                let thumb_rad = if is_track_hovered { 8.5 } else { 7.0 };
+
+                draw_circle(thumb_x, thumb_y, thumb_rad + 3.0, Color::new(0.2, 0.85, 1.0, 0.35));
+                draw_circle(thumb_x, thumb_y, thumb_rad, Color::new(1.0, 0.95, 0.35, 1.0));
+                draw_circle_lines(thumb_x, thumb_y, thumb_rad, 1.2, WHITE);
+            } else if let (Some(l_rect), Some(r_rect)) = (layout.left_arrow_rect, layout.right_arrow_rect) {
+                // Value text centered between the two arrow buttons for normal dropdown rows
                 let val_dim = measure_text(&val, None, 18, 1.0);
                 let center_x = (l_rect.x + l_rect.w + r_rect.x) * 0.5;
                 let val_x = center_x - val_dim.width * 0.5;
