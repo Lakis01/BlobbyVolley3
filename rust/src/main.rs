@@ -317,7 +317,7 @@ async fn main() {
                             audio.play_ball_hit(0.3);
                         }
                         GameMode::HostOnline => {
-                            if let Ok(host) = NetworkHost::bind(DEFAULT_PORT) {
+                            if let Ok(host) = NetworkHost::bind(DEFAULT_PORT, &player1_name, arena.name()) {
                                 net_host = Some(host);
                                 state = AppState::HostLobby;
                             }
@@ -454,7 +454,7 @@ async fn main() {
                     net_host = None;
                     state = AppState::MainMenu;
                 } else if let Some(ref mut host) = net_host {
-                    host.update();
+                    host.update(global_time);
                     if host.is_client_connected {
                         logic = GameLogic::new(rule_mode, score_to_win);
                         physics = PhysicWorld::new();
@@ -607,7 +607,7 @@ async fn main() {
                 // Host / Local authoritative simulation
                 else {
                     let (p1_input, p2_input) = if let Some(ref mut host) = net_host {
-                        host.update();
+                        host.update(global_time);
                         for (sender, text) in host.new_chat_messages.drain(..) {
                             chat_log.push((sender, text, global_time));
                             audio.play_score();
@@ -824,7 +824,10 @@ async fn main() {
             }
             AppState::HostLobby => {
                 let is_connected = net_host.as_ref().map_or(false, |h| h.is_client_connected);
-                render_host_lobby(DEFAULT_PORT, &local_ip, is_connected, global_time);
+                let room_name = net_host.as_ref().map_or("Match", |h| &h.room_name);
+                let host_local_ip = net_host.as_ref().map_or(local_ip.as_str(), |h| &h.local_ip);
+                let public_ep = net_host.as_ref().and_then(|h| h.public_endpoint.as_deref());
+                render_host_lobby(room_name, DEFAULT_PORT, host_local_ip, public_ep, is_connected, global_time);
             }
             AppState::JoinScreen => {
                 let is_connecting = net_client.as_ref().map_or(false, |c| c.is_connecting);

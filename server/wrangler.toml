@@ -1,0 +1,11 @@
+name = "blobby-volley-3-matchmaking"
+main = "worker.js"
+compatibility_date = "2024-01-01"
+
+# Free Cloudflare Workers tier gives 100,000 requests/day for $0/month.
+# To optionally enable persistent KV storage (100k reads/day free):
+# 1. Run: wrangler kv:namespace create "ROOMS_KV"
+# 2. Paste the generated id below and uncomment:
+# [[kv_namespaces]]
+# binding = "ROOMS_KV"
+# id = "YOUR_KV_NAMESPACE_ID"

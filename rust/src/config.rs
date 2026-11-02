@@ -15,6 +15,8 @@ pub struct UserConfig {
     pub rule_mode_index: usize,
     pub left_theme_index: usize,
     pub right_theme_index: usize,
+    #[serde(default)]
+    pub matchmaking_registry_url: Option<String>,
 }
 
 impl Default for UserConfig {
@@ -35,6 +37,7 @@ impl Default for UserConfig {
             rule_mode_index: 0,   // Modern Rally
             left_theme_index: 0,
             right_theme_index: 1,
+            matchmaking_registry_url: None,
         }
     }
 }
@@ -70,3 +73,4 @@ impl UserConfig {
         }
     }
 }
+

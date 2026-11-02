@@ -53,9 +53,13 @@ The AI opponent engine has been expanded from legacy scripts into 5 carefully ca
 
 ---
 
-### 4. Multiplayer & Matchmaking
-- **Public Server Browser**: Built-in matchmaking browser that queries the official master list at `blobbyvolley.de` and lists dedicated community servers.
-- **Zero-Cost P2P & LAN Multiplayer**: Host or join matches with authoritative server simulation, low-latency TCP packet networking, and in-game chat (`T` to chat).
+### 4. Multiplayer & Zero-Cost Serverless Matchmaking
+- **Zero-Cost P2P Architecture (STUN + LAN Broadcast + Serverless)**:
+  - **STUN NAT Traversal**: Implements standard RFC 5389 STUN protocol querying public Google & Cloudflare STUN servers. Automatically discovers and verifies your public internet endpoint so friends across the world can connect directly with no server middleman.
+  - **Zero-Config LAN Auto-Discovery**: Hosts broadcast beacon packets over UDP port 1235 on local Wi-Fi/Ethernet. Available matches instantly and automatically pop up in opponent's **Server Browser** with 1ms latency.
+  - **Serverless Matchmaking Registry**: Includes a ready-to-deploy Cloudflare Worker (`server/worker.js`) running on Cloudflare's global edge for $0.00/month (100k requests/day free tier).
+  - **Public Server Browser**: Discovers LAN rooms, serverless P2P rooms, and dedicated legacy servers from `blobbyvolley.de`.
+  - **In-Game Chat**: Low-latency in-match chat system (`T` or `C` to chat).
 
 ---
 

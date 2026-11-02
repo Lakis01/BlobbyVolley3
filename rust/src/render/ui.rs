@@ -482,40 +482,70 @@ pub fn render_server_browser(
     draw_text(actions, (VIRTUAL_WIDTH - act_dim.width) * 0.5, card_y + card_h - 20.0, 15.0, Color::new(0.3, 0.9, 1.0, 0.95));
 }
 
-pub fn render_host_lobby(port: u16, local_ip: &str, is_connected: bool, time: f32) {
-    draw_rectangle(0.0, 0.0, VIRTUAL_WIDTH, VIRTUAL_HEIGHT, Color::new(0.04, 0.05, 0.1, 0.85));
+pub fn render_host_lobby(
+    room_name: &str,
+    port: u16,
+    local_ip: &str,
+    public_endpoint: Option<&str>,
+    is_connected: bool,
+    time: f32,
+) {
+    draw_rectangle(0.0, 0.0, VIRTUAL_WIDTH, VIRTUAL_HEIGHT, Color::new(0.04, 0.05, 0.1, 0.88));
 
-    let card_w = 520.0;
-    let card_h = 300.0;
+    let card_w = 600.0;
+    let card_h = 360.0;
     let card_x = (VIRTUAL_WIDTH - card_w) * 0.5;
     let card_y = (VIRTUAL_HEIGHT - card_h) * 0.5;
 
-    draw_rectangle(card_x, card_y, card_w, card_h, Color::new(0.08, 0.1, 0.18, 0.92));
-    draw_rectangle_lines(card_x, card_y, card_w, card_h, 2.0, Color::new(0.2, 0.8, 1.0, 0.7));
+    draw_rectangle(card_x, card_y, card_w, card_h, Color::new(0.08, 0.1, 0.18, 0.95));
+    draw_rectangle_lines(card_x, card_y, card_w, card_h, 2.0, Color::new(0.2, 0.85, 1.0, 0.75));
 
-    let title = "HOSTING ONLINE MATCH";
-    let title_dim = measure_text(title, None, 32, 1.0);
-    draw_text(title, (VIRTUAL_WIDTH - title_dim.width) * 0.5, card_y + 48.0, 32.0, Color::new(0.3, 0.9, 1.0, 1.0));
+    let title = "HOSTING ZERO-COST P2P MATCH";
+    let title_dim = measure_text(title, None, 28, 1.0);
+    draw_text(title, (VIRTUAL_WIDTH - title_dim.width) * 0.5, card_y + 44.0, 28.0, Color::new(0.3, 0.9, 1.0, 1.0));
 
-    let info_ip = format!("Your Local LAN IP:  {}:{}", local_ip, port);
-    let info_port = format!("Blobby Volley Port: {}", port);
-    draw_text(&info_ip, card_x + 40.0, card_y + 110.0, 20.0, WHITE);
-    draw_text(&info_port, card_x + 40.0, card_y + 145.0, 20.0, Color::new(0.8, 0.85, 0.95, 0.8));
+    let sub = format!("Room: {}  (Port {})", room_name, port);
+    let sub_dim = measure_text(&sub, None, 16, 1.0);
+    draw_text(&sub, (VIRTUAL_WIDTH - sub_dim.width) * 0.5, card_y + 72.0, 16.0, Color::new(1.0, 0.9, 0.3, 0.9));
 
-    let pulse = (time * 4.0).sin().abs() * 0.3 + 0.7;
-    if is_connected {
-        let msg = "OPPONENT CONNECTED! STARTING...";
-        let msg_dim = measure_text(msg, None, 22, 1.0);
-        draw_text(msg, (VIRTUAL_WIDTH - msg_dim.width) * 0.5, card_y + 210.0, 22.0, Color::new(0.2, 1.0, 0.4, 1.0));
+    // Section 1: Internet / Remote Direct Join (STUN)
+    let y1 = card_y + 115.0;
+    draw_rectangle(card_x + 30.0, y1 - 15.0, card_w - 60.0, 48.0, Color::new(0.05, 0.08, 0.14, 0.9));
+    draw_rectangle_lines(card_x + 30.0, y1 - 15.0, card_w - 60.0, 48.0, 1.0, Color::new(0.2, 0.6, 0.9, 0.5));
+    draw_text("Public Internet Endpoint (STUN Verified):", card_x + 44.0, y1 + 5.0, 14.0, Color::new(0.7, 0.8, 0.95, 0.85));
+
+    if let Some(ep) = public_endpoint {
+        draw_text(ep, card_x + 44.0, y1 + 25.0, 18.0, Color::new(0.3, 1.0, 0.5, 1.0));
+        draw_text("[ Share with friends across internet ]", card_x + 240.0, y1 + 25.0, 14.0, Color::new(0.8, 0.85, 0.95, 0.7));
     } else {
-        let msg = "Waiting for incoming connection...";
+        draw_text("Resolving STUN public endpoint...", card_x + 44.0, y1 + 25.0, 16.0, Color::new(1.0, 0.8, 0.3, 0.8));
+    }
+
+    // Section 2: Local Wi-Fi / LAN Auto-Discovery
+    let y2 = card_y + 180.0;
+    draw_rectangle(card_x + 30.0, y2 - 15.0, card_w - 60.0, 48.0, Color::new(0.05, 0.08, 0.14, 0.9));
+    draw_rectangle_lines(card_x + 30.0, y2 - 15.0, card_w - 60.0, 48.0, 1.0, Color::new(0.2, 0.6, 0.9, 0.5));
+    draw_text("Local Network (LAN Broadcast Active on Port 1235):", card_x + 44.0, y2 + 5.0, 14.0, Color::new(0.7, 0.8, 0.95, 0.85));
+    let lan_info = format!("{}:{}", local_ip, port);
+    draw_text(&lan_info, card_x + 44.0, y2 + 25.0, 18.0, Color::new(0.2, 0.9, 1.0, 1.0));
+    draw_text("[ Auto-appears in opponent's Server Browser ]", card_x + 240.0, y2 + 25.0, 14.0, Color::new(0.8, 0.85, 0.95, 0.7));
+
+    // Section 3: Connection Status
+    let pulse = (time * 4.0).sin().abs() * 0.3 + 0.7;
+    let y3 = card_y + 270.0;
+    if is_connected {
+        let msg = "OPPONENT CONNECTED! LAUNCHING MATCH...";
         let msg_dim = measure_text(msg, None, 20, 1.0);
-        draw_text(msg, (VIRTUAL_WIDTH - msg_dim.width) * 0.5, card_y + 210.0, 20.0, Color::new(1.0, 0.85, 0.2, pulse));
+        draw_text(msg, (VIRTUAL_WIDTH - msg_dim.width) * 0.5, y3, 20.0, Color::new(0.2, 1.0, 0.4, 1.0));
+    } else {
+        let msg = "Waiting for player to connect (via Server Browser or Direct IP)...";
+        let msg_dim = measure_text(msg, None, 16, 1.0);
+        draw_text(msg, (VIRTUAL_WIDTH - msg_dim.width) * 0.5, y3, 16.0, Color::new(1.0, 0.85, 0.3, pulse));
     }
 
     let cancel = "Press Escape to Cancel and Return to Menu";
-    let cancel_dim = measure_text(cancel, None, 16, 1.0);
-    draw_text(cancel, (VIRTUAL_WIDTH - cancel_dim.width) * 0.5, card_y + card_h - 25.0, 16.0, Color::new(0.7, 0.75, 0.85, 0.7));
+    let cancel_dim = measure_text(cancel, None, 15, 1.0);
+    draw_text(cancel, (VIRTUAL_WIDTH - cancel_dim.width) * 0.5, card_y + card_h - 20.0, 15.0, Color::new(0.7, 0.75, 0.85, 0.7));
 }
 
 pub fn render_join_screen(ip_input: &str, is_connecting: bool, error: Option<&str>, time: f32) {
