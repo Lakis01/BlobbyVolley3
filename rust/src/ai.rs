@@ -111,13 +111,15 @@ impl BotController {
     ) -> PlayerInput {
         let is_right = self.side == PlayerSide::Right;
         let my_idx = self.side.index();
+        let court_width = physics.court_width;
+        let half_w = physics.net_x();
 
         // 1. Mirror state to canonical Left side
-        let my_pos_x = if is_right { RIGHT_PLANE - physics.blobs[my_idx].pos.x } else { physics.blobs[my_idx].pos.x };
+        let my_pos_x = if is_right { court_width - physics.blobs[my_idx].pos.x } else { physics.blobs[my_idx].pos.x };
         let my_pos_y = physics.blobs[my_idx].pos.y;
         let my_vel_y = physics.blobs[my_idx].vel.y;
 
-        let ball_pos_x = if is_right { RIGHT_PLANE - physics.ball.pos.x } else { physics.ball.pos.x };
+        let ball_pos_x = if is_right { court_width - physics.ball.pos.x } else { physics.ball.pos.x };
         let ball_pos_y = physics.ball.pos.y;
         let ball_vel_x = if is_right { -physics.ball.vel.x } else { physics.ball.vel.x };
         let ball_vel_y = physics.ball.vel.y;
@@ -137,6 +139,8 @@ impl BotController {
             touches,
             i_am_serving,
             is_game_running,
+            half_w,
+            court_width,
         );
 
         // 3. Mirror actions back if on Right side
@@ -160,25 +164,27 @@ impl BotController {
         touches: i32,
         i_am_serving: bool,
         is_game_running: bool,
+        half_w: f32,
+        court_width: f32,
     ) -> PlayerInput {
         let mut input = PlayerInput::default();
 
         // Delegate to chosen difficulty behavior
         match self.difficulty {
             AiDifficulty::Novice => {
-                self.decide_novice(my_pos, my_vel_y, ball_pos, ball_vel, i_am_serving, is_game_running, &mut input);
+                self.decide_novice(my_pos, my_vel_y, ball_pos, ball_vel, touches, i_am_serving, is_game_running, &mut input, half_w, court_width);
             }
             AiDifficulty::Amateur => {
-                self.decide_amateur(my_pos, my_vel_y, ball_pos, ball_vel, touches, i_am_serving, is_game_running, &mut input);
+                self.decide_amateur(my_pos, my_vel_y, ball_pos, ball_vel, touches, i_am_serving, is_game_running, &mut input, half_w, court_width);
             }
             AiDifficulty::Regular => {
-                self.decide_combot_11(my_pos, ball_pos, ball_vel, touches, i_am_serving, is_game_running, &mut input);
+                self.decide_combot_11(my_pos, ball_pos, ball_vel, touches, i_am_serving, is_game_running, &mut input, half_w, court_width);
             }
             AiDifficulty::Master => {
-                self.decide_advanced(my_pos, my_vel_y, ball_pos, ball_vel, touches, i_am_serving, is_game_running, &mut input);
+                self.decide_advanced(my_pos, my_vel_y, ball_pos, ball_vel, touches, i_am_serving, is_game_running, &mut input, half_w, court_width);
             }
             AiDifficulty::Pro => {
-                self.decide_reduced(my_pos, ball_pos, ball_vel, touches, i_am_serving, is_game_running, &mut input);
+                self.decide_reduced(my_pos, ball_pos, ball_vel, touches, i_am_serving, is_game_running, &mut input, half_w, court_width);
             }
         }
 
@@ -192,10 +198,14 @@ impl BotController {
         my_vel_y: f32,
         ball_pos: Vec2,
         ball_vel: Vec2,
+        touches: i32,
         i_am_serving: bool,
         is_game_running: bool,
         input: &mut PlayerInput,
+        half_w: f32,
+        court_width: f32,
     ) {
+        let base_x = half_w * 0.32;
         if !is_game_running {
             if i_am_serving {
                 let target_x = ball_pos.x - 3.0;
@@ -203,38 +213,39 @@ impl BotController {
                     input.up = true;
                 }
             } else {
-                moveto(my_pos.x, 120.0, input);
+                moveto(my_pos.x, base_x, input);
             }
             return;
         }
 
         let head_y = 379.5;
-        let impact_head = estimate_x_at_y(ball_pos, ball_vel, head_y, true);
+        let impact_head = estimate_x_at_y(ball_pos, ball_vel, head_y, true, court_width);
 
         let target_x = if let Some((tx, _, _)) = impact_head {
-            if tx > 390.0 { 120.0 } else { tx.clamp(45.0, 360.0) }
+            if tx > half_w - 10.0 { base_x } else { tx.clamp(45.0, half_w - 40.0) }
         } else {
-            if ball_pos.x > 380.0 { 120.0 } else { ball_pos.x.clamp(45.0, 360.0) }
+            if ball_pos.x > half_w - 20.0 { base_x } else { ball_pos.x.clamp(45.0, half_w - 40.0) }
         };
 
-        // Moveto with slight reaction deadband
+        // Moveto with slight reaction deadband (gentle beginner tier)
         let deadband = 12.0;
-        if my_pos.x < target_x - deadband {
+        let hit_target = (target_x - 10.0).clamp(40.0, half_w - 40.0);
+        if my_pos.x < hit_target - deadband {
             input.right = true;
-        } else if my_pos.x > target_x + deadband {
+        } else if my_pos.x > hit_target + deadband {
             input.left = true;
         }
 
-        // Gentle hop if ball is low and close to head
+        // Gentle hop if ball is low and close to head, or on touch 2
         let dist = (my_pos.x - ball_pos.x).abs();
-        if dist < 25.0 && ball_pos.y > 350.0 && my_vel_y >= 0.0 {
+        if (dist < 22.0 && ball_pos.y > 360.0 && my_vel_y >= 0.0) || (touches >= 2 && dist < 28.0 && ball_pos.y > 330.0) {
             input.up = true;
         }
     }
 
-    /// Amateur AI: Intermediate tier between Novice and Regular.
-    /// Uses trajectory estimation to reliably position without deadband delay,
-    /// primarily returns cleanly from the ground, and hops forward on touch 2.
+    /// Amateur AI: Intermediate tier strictly between Novice and Regular.
+    /// Uses trajectory estimation with full BLOBBY_SPEED, returns cleanly over net,
+    /// and pushes forward with a hop on touch 2 or floating net balls.
     fn decide_amateur(
         &mut self,
         my_pos: Vec2,
@@ -245,7 +256,10 @@ impl BotController {
         i_am_serving: bool,
         is_game_running: bool,
         input: &mut PlayerInput,
+        half_w: f32,
+        court_width: f32,
     ) {
+        let base_x = half_w * 0.32;
         if !is_game_running {
             if i_am_serving {
                 let target_x = ball_pos.x - 4.0;
@@ -253,29 +267,41 @@ impl BotController {
                     input.up = true;
                 }
             } else {
-                moveto(my_pos.x, 125.0, input);
+                moveto(my_pos.x, base_x, input);
             }
             return;
         }
 
         let head_y = 379.5;
-        let impact_head = estimate_x_at_y(ball_pos, ball_vel, head_y, true);
+        let impact_head = estimate_x_at_y(ball_pos, ball_vel, head_y, true, court_width);
 
         if let Some((target_x, _, time_to_hit)) = impact_head {
-            if target_x > 395.0 {
-                // Ball will land on opponent side
-                moveto(my_pos.x, 125.0, input);
+            if target_x > half_w - 5.0 && ball_pos.x > half_w - 20.0 {
+                // Ball heading to opponent court: return to base
+                moveto(my_pos.x, base_x, input);
             } else {
-                let clamped_x = target_x.clamp(40.0, 360.0);
+                // Position slightly behind the ball to hit cleanly forward over the net
+                let offset = if target_x > half_w - 70.0 { 8.0 } else { 15.0 };
+                let clamped_x = (target_x - offset).clamp(38.0, half_w - 38.0);
                 moveto(my_pos.x, clamped_x, input);
 
-                // On touch 2 or high return, push forward with a hop
-                if touches >= 2 && time_to_hit <= 18.0 && (my_pos.x - clamped_x).abs() < 22.0 && my_vel_y >= 0.0 {
+                let dist_to_target = (my_pos.x - clamped_x).abs();
+
+                // 1. On touch 2 (last hit!): ALWAYS jump forward to clear the net!
+                if touches >= 2 && time_to_hit <= 24.0 && dist_to_target < 28.0 && my_vel_y >= 0.0 {
+                    input.up = true;
+                }
+                // 2. Near net defense: jump push to prevent ball dropping on net tape
+                else if target_x > half_w - 85.0 && time_to_hit <= 20.0 && dist_to_target < 24.0 && my_vel_y >= 0.0 {
+                    input.up = true;
+                }
+                // 3. Floating ball attack: if ball is slow and hanging at jump height on touch 1
+                else if touches == 1 && ball_vel.y.abs() < 3.0 && ball_pos.y < 330.0 && dist_to_target < 20.0 && my_vel_y >= 0.0 {
                     input.up = true;
                 }
             }
         } else {
-            let safe_x = if ball_pos.x > 380.0 { 125.0 } else { ball_pos.x.clamp(45.0, 360.0) };
+            let safe_x = if ball_pos.x > half_w - 20.0 { base_x } else { ball_pos.x.clamp(45.0, half_w - 40.0) };
             moveto(my_pos.x, safe_x, input);
         }
     }
@@ -292,7 +318,10 @@ impl BotController {
         i_am_serving: bool,
         is_game_running: bool,
         input: &mut PlayerInput,
+        half_w: f32,
+        court_width: f32,
     ) {
+        let base_x = half_w * 0.32;
         if !is_game_running {
             if i_am_serving {
                 self.next_smash = true;
@@ -301,7 +330,7 @@ impl BotController {
                     input.up = true;
                 }
             } else {
-                moveto(my_pos.x, 120.0, input);
+                moveto(my_pos.x, base_x, input);
                 self.reset_rally();
             }
             return;
@@ -311,11 +340,11 @@ impl BotController {
         let net_y = 276.0;
         let jump_y = 217.0;
 
-        let impact_head = estimate_x_at_y(ball_pos, ball_vel, head_y, true);
-        let impact_net = estimate_x_at_y(ball_pos, ball_vel, net_y, true);
-        let impact_jump = estimate_x_at_y(ball_pos, ball_vel, jump_y, true);
+        let impact_head = estimate_x_at_y(ball_pos, ball_vel, head_y, true, court_width);
+        let impact_net = estimate_x_at_y(ball_pos, ball_vel, net_y, true, court_width);
+        let impact_jump = estimate_x_at_y(ball_pos, ball_vel, jump_y, true, court_width);
 
-        if touches >= 3 || ball_pos.x > 400.0 {
+        if touches >= 3 || ball_pos.x > half_w {
             self.next_smash = false;
         } else if touches == 1 && ball_vel.x.abs() < 3.0 {
             self.next_smash = true;
@@ -325,15 +354,15 @@ impl BotController {
 
         // Net tape roller defense
         if let Some((target_net_x, _, _)) = impact_net {
-            if target_net_x > 355.0 && target_net_x <= 400.0 {
+            if target_net_x > half_w - 45.0 && target_net_x <= half_w {
                 self.next_smash = true;
             }
         }
 
         // If ball heading to opponent side, retreat and reset
-        let target = impact_head.map(|(x, _, _)| x).unwrap_or(800.0);
-        if target > 395.0 && ball_pos.x > 380.0 {
-            moveto(my_pos.x, 120.0, input);
+        let target = impact_head.map(|(x, _, _)| x).unwrap_or(court_width);
+        if target > half_w - 5.0 && ball_pos.x > half_w - 20.0 {
+            moveto(my_pos.x, base_x, input);
             self.reset_rally();
             return;
         }
@@ -341,13 +370,13 @@ impl BotController {
         // High smash attack
         if self.next_smash {
             if let Some((target_jump_x, target_speed, time_to_jump)) = impact_jump {
-                if target_jump_x < 380.0 && target_jump_x > 40.0 && target_speed.abs() < 3.5 {
-                    let net_dist_ratio = (target_jump_x / 360.0).clamp(0.0, 1.0);
+                if target_jump_x < half_w - 20.0 && target_jump_x > 40.0 && target_speed.abs() < 3.5 {
+                    let net_dist_ratio = (target_jump_x / (half_w - 40.0)).clamp(0.0, 1.0);
                     let min_power = 28.0 + 10.0 * net_dist_ratio;
                     let max_power = 55.0 - 10.0 * net_dist_ratio;
                     let power = self.attack_power.clamp(min_power, max_power);
 
-                    let attack_x = (target_jump_x - power).clamp(35.0, 365.0);
+                    let attack_x = (target_jump_x - power).clamp(35.0, half_w - 35.0);
                     moveto(my_pos.x, attack_x, input);
 
                     if time_to_jump <= 31.5 && (my_pos.x - attack_x).abs() < 24.0 {
@@ -364,15 +393,15 @@ impl BotController {
             let balldir = if est_vx > 0.0 { 1.0 } else { -1.0 };
             let in_time = timeto > (balldir * (target_low - my_pos.x) - 12.0) / BLOBBY_SPEED;
 
-            if in_time || naive_target >= 400.0 {
-                moveto(my_pos.x, target_low.clamp(35.0, 365.0), input);
-            } else if naive_target < 400.0 {
+            if in_time || naive_target >= half_w {
+                moveto(my_pos.x, target_low.clamp(35.0, half_w - 35.0), input);
+            } else if naive_target < half_w {
                 // PANIC DIVE!
                 moveto(my_pos.x, target_low, input);
                 input.up = true;
             }
         } else {
-            let safe_x = if ball_pos.x > 380.0 { 120.0 } else { ball_pos.x.clamp(45.0, 360.0) };
+            let safe_x = if ball_pos.x > half_w - 20.0 { base_x } else { ball_pos.x.clamp(45.0, half_w - 40.0) };
             moveto(my_pos.x, safe_x, input);
         }
     }
@@ -387,7 +416,10 @@ impl BotController {
         i_am_serving: bool,
         is_game_running: bool,
         input: &mut PlayerInput,
+        half_w: f32,
+        court_width: f32,
     ) {
+        let base_x = half_w * 0.25;
         if !is_game_running {
             if i_am_serving {
                 if self.serve_rand.is_none() {
@@ -399,15 +431,15 @@ impl BotController {
                     self.serve_rand = None;
                 }
             } else {
-                moveto(my_pos.x, 100.0, input);
+                moveto(my_pos.x, base_x, input);
             }
             return;
         }
 
         // estimImpactHigh: destination y = 242.0 (CONST_BLOBBY_MAX_JUMP - 25 in BV2)
-        let impact_high = estimate_x_at_y(ball_pos, ball_vel, 242.0, true);
+        let impact_high = estimate_x_at_y(ball_pos, ball_vel, 242.0, true, court_width);
         // estimImpactLow: destination y = 379.5 (CONST_BALL_BLOBBY_HEAD in BV2)
-        let impact_low = estimate_x_at_y(ball_pos, ball_vel, 379.5, true);
+        let impact_low = estimate_x_at_y(ball_pos, ball_vel, 379.5, true, court_width);
 
         // Try High Play
         if let Some((target_high, est_vx, timeto)) = impact_high {
@@ -416,25 +448,25 @@ impl BotController {
                 target_high - 50.0 - est_vx * 5.0
             } else {
                 target_high - 50.0
-            }.clamp(35.0, 365.0);
+            }.clamp(35.0, half_w - 35.0);
 
             let can_reach = timeto > (my_pos.x - high_play_pos).abs() / BLOBBY_SPEED + 26.0;
 
-            if naive_target < 400.0 && target_high < 400.0 && (self.mode_lock || can_reach) && touches < 3 {
+            if naive_target < half_w && target_high < half_w && (self.mode_lock || can_reach) && touches < 3 {
                 self.mode_lock = timeto < 30.0;
                 if !self.mode_lock {
                     self.serve_rand = None;
                 }
 
                 // highPlay
-                if target_high > 400.0 {
-                    moveto(my_pos.x, 100.0, input);
+                if target_high > half_w {
+                    moveto(my_pos.x, base_x, input);
                 } else {
                     moveto(my_pos.x, high_play_pos, input);
                     if self.serve_rand.is_none() {
                         self.serve_rand = Some(gen_range(0.0, 1.0));
                     }
-                    if naive_target < 400.0 && timeto < (28.0 + self.serve_rand.unwrap()) {
+                    if naive_target < half_w && timeto < (28.0 + self.serve_rand.unwrap()) {
                         input.up = true;
                     }
                 }
@@ -451,29 +483,29 @@ impl BotController {
             let balldir = if est_vx > 0.0 { 1.0 } else { -1.0 };
             let in_time = timeto > (balldir * (target_low - my_pos.x) - 10.0) / BLOBBY_SPEED;
 
-            if in_time || naive_target >= 400.0 {
+            if in_time || naive_target >= half_w {
                 // Low play: move to target, ground receive (no jump)
-                if target_low > 400.0 {
-                    moveto(my_pos.x, 100.0, input);
+                if target_low > half_w {
+                    moveto(my_pos.x, base_x, input);
                 } else {
                     moveto(my_pos.x, target_low, input);
                 }
-            } else if naive_target < 400.0 {
+            } else if naive_target < half_w {
                 // PANIC SAVE! Dive/jump towards target
                 moveto(my_pos.x, target_low, input);
                 input.up = true;
             }
         } else {
             // Ball not reachable or high in air
-            if ball_pos.x > 380.0 {
-                moveto(my_pos.x, 100.0, input);
+            if ball_pos.x > half_w - 20.0 {
+                moveto(my_pos.x, base_x, input);
             } else {
-                moveto(my_pos.x, ball_pos.x.clamp(45.0, 360.0), input);
+                moveto(my_pos.x, ball_pos.x.clamp(45.0, half_w - 40.0), input);
             }
         }
     }
 
-    /// Master AI: Authentic port of Blobby Volley 2 "com_11.lua" (Combot 1.1)
+    /// Regular AI: Authentic port of Blobby Volley 2 "com_11.lua" (Combot 1.1)
     fn decide_combot_11(
         &mut self,
         my_pos: Vec2,
@@ -483,7 +515,10 @@ impl BotController {
         i_am_serving: bool,
         is_game_running: bool,
         input: &mut PlayerInput,
+        half_w: f32,
+        court_width: f32,
     ) {
+        let base_x = half_w * 0.33;
         if !is_game_running {
             if i_am_serving {
                 self.next_smash = true;
@@ -492,7 +527,7 @@ impl BotController {
                     input.up = true;
                 }
             } else {
-                moveto(my_pos.x, 130.0, input);
+                moveto(my_pos.x, base_x, input);
                 self.reset_rally();
             }
             return;
@@ -502,12 +537,12 @@ impl BotController {
         let net_y = 276.0;
         let jump_y = 217.0; // Lua 383: 600 - 383 = 217
 
-        let impact_head = estimate_x_at_y(ball_pos, ball_vel, head_y, true);
-        let impact_net = estimate_x_at_y(ball_pos, ball_vel, net_y, true);
-        let impact_jump = estimate_x_at_y(ball_pos, ball_vel, jump_y, true);
+        let impact_head = estimate_x_at_y(ball_pos, ball_vel, head_y, true, court_width);
+        let impact_net = estimate_x_at_y(ball_pos, ball_vel, net_y, true, court_width);
+        let impact_jump = estimate_x_at_y(ball_pos, ball_vel, jump_y, true, court_width);
 
         // naechsterBallSchmetternFlagTesten:
-        if touches >= 3 || ball_pos.x > 400.0 {
+        if touches >= 3 || ball_pos.x > half_w {
             self.next_smash = false;
         } else if touches == 1 && ball_vel.x.abs() < 2.5 {
             self.next_smash = true;
@@ -517,17 +552,17 @@ impl BotController {
 
         // Net roller recovery (targetNetz > CONST_BALL_LEFT_NET - 10)
         if let Some((target_net_x, _, _)) = impact_net {
-            if target_net_x > 360.0 && target_net_x <= 400.0 {
+            if target_net_x > half_w - 40.0 && target_net_x <= half_w {
                 self.next_smash = true;
             }
         }
 
         // Target at head height
-        let target = impact_head.map(|(x, _, _)| x).unwrap_or(800.0);
+        let target = impact_head.map(|(x, _, _)| x).unwrap_or(court_width);
 
-        if target > 395.0 && ball_pos.x > 380.0 {
-            // Ball belongs to opponent: wait at base 135 and roll power
-            moveto(my_pos.x, 135.0, input);
+        if target > half_w - 5.0 && ball_pos.x > half_w - 20.0 {
+            // Ball belongs to opponent: wait at base and roll power
+            moveto(my_pos.x, base_x, input);
             self.reset_rally();
             return;
         }
@@ -535,15 +570,15 @@ impl BotController {
         // If next_smash is active, execute sprungattacke or weiterleiten
         if self.next_smash {
             if let Some((target_jump_x, target_speed, time_to_jump)) = impact_jump {
-                if target_jump_x < 380.0 && target_jump_x > 40.0 {
+                if target_jump_x < half_w - 20.0 && target_jump_x > 40.0 {
                     if target_speed.abs() < 2.5 {
                         // sprungattacke:
-                        let net_dist_ratio = (target_jump_x / 360.0).clamp(0.0, 1.0);
+                        let net_dist_ratio = (target_jump_x / (half_w - 40.0)).clamp(0.0, 1.0);
                         let min_power = 30.0 + 10.0 * net_dist_ratio;
                         let max_power = 55.0 - 10.0 * net_dist_ratio;
                         let power = self.attack_power.clamp(min_power, max_power);
 
-                        let attack_x = (target_jump_x - power).clamp(35.0, 365.0);
+                        let attack_x = (target_jump_x - power).clamp(35.0, half_w - 35.0);
                         moveto(my_pos.x, attack_x, input);
 
                         // jumpto(383): blobtimetoy(383) is ~31.6 ticks
@@ -552,8 +587,8 @@ impl BotController {
                         }
                         return;
                     } else {
-                        // weiterleiten: move to 200 and pass forward
-                        moveto(my_pos.x, 200.0, input);
+                        // weiterleiten: move to quarter court and pass forward
+                        moveto(my_pos.x, half_w * 0.5, input);
                         if time_to_jump <= 28.0 {
                             input.up = true;
                         }
@@ -564,11 +599,11 @@ impl BotController {
         }
 
         // Low play: moveto(target) with firm ground receive (no jump!)
-        let head_dest = if target < 400.0 { target } else { ball_pos.x.clamp(45.0, 360.0) };
+        let head_dest = if target < half_w { target } else { ball_pos.x.clamp(45.0, half_w - 40.0) };
         moveto(my_pos.x, head_dest, input);
 
         // Emergency dive jump if ball is dropping very fast out of reach
-        if ball_pos.y > 430.0 && (my_pos.x - ball_pos.x).abs() > 22.0 && ball_pos.x < 390.0 {
+        if ball_pos.y > 430.0 && (my_pos.x - ball_pos.x).abs() > 22.0 && ball_pos.x < half_w - 10.0 {
             input.up = true;
         }
     }
@@ -594,15 +629,17 @@ fn moveto(current_x: f32, target_x: f32, input: &mut PlayerInput) -> bool {
     }
 }
 
-/// Exact physical ball simulation in canonical space (left court = [0, 400], right court = [400, 800]).
+/// Exact physical ball simulation in canonical space (left court = [0, half_w], right court = [half_w, court_width]).
 /// Matches PhysicWorld ball simulation tick-for-tick up to 375 ticks (5 seconds at 75 Hz).
 pub fn estimate_x_at_y(
     mut pos: Vec2,
     mut vel: Vec2,
     dest_y: f32,
     downward: bool,
+    court_width: f32,
 ) -> Option<(f32, f32, f32)> {
     let max_ticks = 375;
+    let net_x = court_width * 0.5;
 
     for tick in 1..=max_ticks {
         // dt = 1
@@ -622,15 +659,15 @@ pub fn estimate_x_at_y(
         }
 
         // Right wall
-        if pos.x + BALL_RADIUS >= RIGHT_PLANE && vel.x > 0.0 {
+        if pos.x + BALL_RADIUS >= court_width && vel.x > 0.0 {
             vel.x = -vel.x;
-            pos.x = RIGHT_PLANE - BALL_RADIUS;
+            pos.x = court_width - BALL_RADIUS;
         }
 
         // Net stem collision
         if pos.y > NET_SPHERE_POSITION {
-            let left_bound = NET_POSITION_X - NET_RADIUS - BALL_RADIUS;
-            let right_bound = NET_POSITION_X + NET_RADIUS + BALL_RADIUS;
+            let left_bound = net_x - NET_RADIUS - BALL_RADIUS;
+            let right_bound = net_x + NET_RADIUS + BALL_RADIUS;
             if pos.x >= left_bound && pos.x <= right_bound {
                 if vel.x > 0.0 {
                     vel.x = -vel.x;
@@ -643,7 +680,7 @@ pub fn estimate_x_at_y(
         }
 
         // Net round top cap
-        let net_pos = Vec2::new(NET_POSITION_X, NET_SPHERE_POSITION);
+        let net_pos = Vec2::new(net_x, NET_SPHERE_POSITION);
         let dist = (pos - net_pos).length();
         let total_radius = BALL_RADIUS + NET_RADIUS;
         if dist < total_radius {
@@ -672,5 +709,5 @@ pub fn estimate_x_at_y(
 
 #[allow(dead_code)]
 pub fn estimate_ball_trajectory(ball_pos: Vec2, ball_vel: Vec2, target_y: f32) -> Option<(f32, f32, f32)> {
-    estimate_x_at_y(ball_pos, ball_vel, target_y, true)
+    estimate_x_at_y(ball_pos, ball_vel, target_y, true, 800.0)
 }

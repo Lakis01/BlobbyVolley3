@@ -95,17 +95,17 @@ impl ArenaType {
     }
 }
 
-pub fn render_arena(arena: ArenaType, time: f32, view_x0: f32, view_w: f32, ball_pos: Vec2, cheer: CheerState) {
+pub fn render_arena(arena: ArenaType, time: f32, view_x0: f32, view_w: f32, ball_pos: Vec2, cheer: CheerState, court_width: f32) {
     // Calculate full dynamic screen bounds to seamlessly fill all displays (e.g. 16:10, 16:9, 21:9 ultrawide)
     let x_left = view_x0.min(-250.0);
-    let x_right = (view_x0 + view_w).max(1050.0);
+    let x_right = (view_x0 + view_w).max(court_width + 250.0);
     let full_w = x_right - x_left;
 
     match arena {
         ArenaType::SunsetBeach => render_sunset_beach(time, x_left, x_right, full_w),
-        ArenaType::GrandStadium => render_grand_stadium(time, x_left, x_right, full_w, ball_pos, cheer),
-        ArenaType::CyberNeon => render_cyber_neon(time, x_left, x_right, full_w, ball_pos, cheer),
-        ArenaType::OlympicBeach => render_olympic_beach(time, x_left, x_right, full_w, ball_pos, cheer),
+        ArenaType::GrandStadium => render_grand_stadium(time, x_left, x_right, full_w, ball_pos, cheer, court_width),
+        ArenaType::CyberNeon => render_cyber_neon(time, x_left, x_right, full_w, ball_pos, cheer, court_width),
+        ArenaType::OlympicBeach => render_olympic_beach(time, x_left, x_right, full_w, ball_pos, cheer, court_width),
         ArenaType::ClassicRemaster => render_classic_remaster(time, x_left, x_right, full_w),
         ArenaType::AlpinePeaks => render_alpine_peaks(time, x_left, x_right, full_w),
         ArenaType::MagmaCaldera => render_magma_caldera(time, x_left, x_right, full_w),
@@ -113,10 +113,10 @@ pub fn render_arena(arena: ArenaType, time: f32, view_x0: f32, view_w: f32, ball
     }
 
     // Render tournament court boundary guidelines and floodlight towers
-    render_court_boundaries(time, arena);
+    render_court_boundaries(time, arena, court_width);
 
     // Render in-game perimeter advertising boards across active court and side extensions
-    render_perimeter_boards(time, arena, x_left, x_right);
+    render_perimeter_boards(time, arena, x_left, x_right, court_width);
 }
 
 // =========================================================================
@@ -223,7 +223,7 @@ fn render_sunset_beach(time: f32, x_left: f32, x_right: f32, full_w: f32) {
 // =========================================================================
 // 2. BLOBBY GRAND ARENA (Premier World Championship Stadium with Spectators)
 // =========================================================================
-fn render_grand_stadium(time: f32, x_left: f32, x_right: f32, full_w: f32, ball_pos: Vec2, cheer: CheerState) {
+fn render_grand_stadium(time: f32, x_left: f32, x_right: f32, full_w: f32, ball_pos: Vec2, cheer: CheerState, court_width: f32) {
     // 1. Indoor Stadium Enclosed Ceiling Dome extending into upper sky
     let ceil_top = -500.0;
     let ceil_bot = 175.0;
@@ -258,7 +258,7 @@ fn render_grand_stadium(time: f32, x_left: f32, x_right: f32, full_w: f32, ball_
     // 2. Upper Balcony Tier Bleachers (y = 165, 192, 219)
     let upper_rows = [165.0, 192.0, 219.0];
     let upper_scales = [0.48, 0.53, 0.58];
-    render_stadium_crowd(time, x_left, x_right, &upper_rows, &upper_scales, CrowdStyle::GrandColiseum, ball_pos, cheer);
+    render_stadium_crowd(time, x_left, x_right, &upper_rows, &upper_scales, CrowdStyle::GrandColiseum, ball_pos, cheer, court_width);
 
     // Balcony Tier Concrete Fascia & LED Ribbon Board
     let fascia_y = 236.0;
@@ -278,7 +278,7 @@ fn render_grand_stadium(time: f32, x_left: f32, x_right: f32, full_w: f32, ball_
     // 4. Lower Main Grandstand Bleachers (y = 272, 302, 332, 362, 392)
     let lower_rows = [272.0, 302.0, 332.0, 362.0, 392.0];
     let lower_scales = [0.65, 0.72, 0.79, 0.86, 0.93];
-    render_stadium_crowd(time, x_left, x_right, &lower_rows, &lower_scales, CrowdStyle::GrandColiseum, ball_pos, cheer);
+    render_stadium_crowd(time, x_left, x_right, &lower_rows, &lower_scales, CrowdStyle::GrandColiseum, ball_pos, cheer, court_width);
 
     // 5. Hardwood Parquet Championship Court Floor
     let court_top = GROUND_PLANE_HEIGHT_MAX - 75.0; // 425.0
@@ -297,7 +297,7 @@ fn render_grand_stadium(time: f32, x_left: f32, x_right: f32, full_w: f32, ball_
 // =========================================================================
 // 3. NEO TOKYO CYBER STADIUM (Synthwave / Cyberpunk Full-Screen Grid with Cyber Crowd)
 // =========================================================================
-fn render_cyber_neon(time: f32, x_left: f32, x_right: f32, full_w: f32, ball_pos: Vec2, cheer: CheerState) {
+fn render_cyber_neon(time: f32, x_left: f32, x_right: f32, full_w: f32, ball_pos: Vec2, cheer: CheerState, court_width: f32) {
     let sky_top = -500.0;
     let sky_bot = 240.0;
     let sky_h = sky_bot - sky_top;
@@ -312,8 +312,8 @@ fn render_cyber_neon(time: f32, x_left: f32, x_right: f32, full_w: f32, ball_pos
         draw_rectangle(x_left, y, full_w, h, Color::new(r, g, b, 1.0));
     }
 
-    // Giant Wireframe Retro Sun
-    let sun_x = 400.0;
+    // Giant Wireframe Retro Sun centered at net
+    let sun_x = court_width * 0.5;
     let sun_y = 150.0;
     let sun_radius = 75.0;
     draw_circle(sun_x, sun_y, sun_radius + 20.0, Color::new(1.0, 0.15, 0.65, 0.12));
@@ -362,7 +362,7 @@ fn render_cyber_neon(time: f32, x_left: f32, x_right: f32, full_w: f32, ball_pos
     // Neon Cyber Stadium Bleachers packed with Cyber-Blob Spectators!
     let cyber_rows = [245.0, 282.0, 319.0, 356.0, 392.0];
     let cyber_scales = [0.63, 0.71, 0.79, 0.87, 0.94];
-    render_stadium_crowd(time, x_left, x_right, &cyber_rows, &cyber_scales, CrowdStyle::Cyberpunk, ball_pos, cheer);
+    render_stadium_crowd(time, x_left, x_right, &cyber_rows, &cyber_scales, CrowdStyle::Cyberpunk, ball_pos, cheer, court_width);
 
     // 3D Perspective Cyber Grid Floor
     let grid_top = GROUND_PLANE_HEIGHT_MAX - 75.0; // 425.0
@@ -377,9 +377,10 @@ fn render_cyber_neon(time: f32, x_left: f32, x_right: f32, full_w: f32, ball_pos
     }
 
     let v_rays = 24;
+    let net_center_x = court_width * 0.5;
     for i in 0..=v_rays {
         let bottom_x = x_left + i as f32 * (full_w / v_rays as f32);
-        let vanish_x = 400.0 + (bottom_x - 400.0) * 0.2;
+        let vanish_x = net_center_x + (bottom_x - net_center_x) * 0.2;
         draw_line(vanish_x, grid_top, bottom_x, VIRTUAL_HEIGHT + 50.0, 1.2, Color::new(1.0, 0.15, 0.7, 0.35));
     }
 }
@@ -387,7 +388,7 @@ fn render_cyber_neon(time: f32, x_left: f32, x_right: f32, full_w: f32, ball_pos
 // =========================================================================
 // 4. OLYMPIC BEACH STADIUM (Open-Air Seaside Tournament Grandstands)
 // =========================================================================
-fn render_olympic_beach(time: f32, x_left: f32, x_right: f32, full_w: f32, ball_pos: Vec2, cheer: CheerState) {
+fn render_olympic_beach(time: f32, x_left: f32, x_right: f32, full_w: f32, ball_pos: Vec2, cheer: CheerState, court_width: f32) {
     // 1. Sunny Coastal Azure Sky extending into upper sky
     let sky_top = -500.0;
     let sky_bot = 240.0;
@@ -478,7 +479,7 @@ fn render_olympic_beach(time: f32, x_left: f32, x_right: f32, full_w: f32, ball_
     // 3. Bleacher Rows filled with Beach Blob Spectators
     let beach_rows = [248.0, 284.0, 320.0, 356.0, 392.0];
     let beach_scales = [0.64, 0.71, 0.78, 0.85, 0.92];
-    render_stadium_crowd(time, x_left, x_right, &beach_rows, &beach_scales, CrowdStyle::OlympicBeach, ball_pos, cheer);
+    render_stadium_crowd(time, x_left, x_right, &beach_rows, &beach_scales, CrowdStyle::OlympicBeach, ball_pos, cheer, court_width);
 
     // 4. Golden Sand Court
     let sand_top = GROUND_PLANE_HEIGHT_MAX - 75.0;
@@ -769,7 +770,7 @@ fn render_orbital_station(time: f32, x_left: f32, x_right: f32, full_w: f32) {
 // =========================================================================
 // TOURNAMENT COURT BOUNDARY GUIDELINES & FLOODLIGHT TOWERS
 // =========================================================================
-fn render_court_boundaries(time: f32, arena: ArenaType) {
+fn render_court_boundaries(time: f32, arena: ArenaType, court_width: f32) {
     let (line_col, glow_col) = match arena {
         ArenaType::SunsetBeach | ArenaType::ClassicRemaster | ArenaType::OlympicBeach => (
             Color::new(1.0, 1.0, 1.0, 0.92),
@@ -797,19 +798,22 @@ fn render_court_boundaries(time: f32, arena: ArenaType) {
         ),
     };
 
-    // 1. Official Ground Baseline Tape (0..800 at y = 500)
-    draw_line(LEFT_PLANE, GROUND_PLANE_HEIGHT_MAX, RIGHT_PLANE, GROUND_PLANE_HEIGHT_MAX, 3.5, line_col);
+    let left_plane = 0.0;
+    let right_plane = court_width;
 
-    // 2. High-Tech Vertical Court Barrier Posts at x = 0.0 and x = 800.0
+    // 1. Official Ground Baseline Tape (0..court_width at y = 500)
+    draw_line(left_plane, GROUND_PLANE_HEIGHT_MAX, right_plane, GROUND_PLANE_HEIGHT_MAX, 3.5, line_col);
+
+    // 2. High-Tech Vertical Court Barrier Posts at x = 0.0 and x = right_plane
     // Perfectly aligns with physical wall bounce planes, extending up into the sky so players have crisp visual feedback on high balls
     let top_bounce_y = -500.0;
     let pulse = (time * 4.0).sin().abs() * 0.2 + 0.8;
-    draw_line(LEFT_PLANE, top_bounce_y, LEFT_PLANE, GROUND_PLANE_HEIGHT_MAX, 2.5, Color::new(glow_col.r, glow_col.g, glow_col.b, glow_col.a * pulse));
-    draw_line(RIGHT_PLANE, top_bounce_y, RIGHT_PLANE, GROUND_PLANE_HEIGHT_MAX, 2.5, Color::new(glow_col.r, glow_col.g, glow_col.b, glow_col.a * pulse));
+    draw_line(left_plane, top_bounce_y, left_plane, GROUND_PLANE_HEIGHT_MAX, 2.5, Color::new(glow_col.r, glow_col.g, glow_col.b, glow_col.a * pulse));
+    draw_line(right_plane, top_bounce_y, right_plane, GROUND_PLANE_HEIGHT_MAX, 2.5, Color::new(glow_col.r, glow_col.g, glow_col.b, glow_col.a * pulse));
 
     // Outer subtle glow halo
-    draw_line(LEFT_PLANE - 1.5, top_bounce_y, LEFT_PLANE - 1.5, GROUND_PLANE_HEIGHT_MAX, 5.0, Color::new(glow_col.r, glow_col.g, glow_col.b, 0.15));
-    draw_line(RIGHT_PLANE + 1.5, top_bounce_y, RIGHT_PLANE + 1.5, GROUND_PLANE_HEIGHT_MAX, 5.0, Color::new(glow_col.r, glow_col.g, glow_col.b, 0.15));
+    draw_line(left_plane - 1.5, top_bounce_y, left_plane - 1.5, GROUND_PLANE_HEIGHT_MAX, 5.0, Color::new(glow_col.r, glow_col.g, glow_col.b, 0.15));
+    draw_line(right_plane + 1.5, top_bounce_y, right_plane + 1.5, GROUND_PLANE_HEIGHT_MAX, 5.0, Color::new(glow_col.r, glow_col.g, glow_col.b, 0.15));
 
     // Height indicator tick hashes along vertical bounce bars
     let mut hash_y = top_bounce_y + 25.0;
@@ -817,8 +821,8 @@ fn render_court_boundaries(time: f32, arena: ArenaType) {
         let is_major = (hash_y as i32).abs() % 100 < 10;
         let h_len = if is_major { 10.0 } else { 5.0 };
         let h_alpha = if is_major { 0.45 } else { 0.25 };
-        draw_line(LEFT_PLANE, hash_y, LEFT_PLANE + h_len, hash_y, 1.2, Color::new(glow_col.r, glow_col.g, glow_col.b, h_alpha));
-        draw_line(RIGHT_PLANE - h_len, hash_y, RIGHT_PLANE, hash_y, 1.2, Color::new(glow_col.r, glow_col.g, glow_col.b, h_alpha));
+        draw_line(left_plane, hash_y, left_plane + h_len, hash_y, 1.2, Color::new(glow_col.r, glow_col.g, glow_col.b, h_alpha));
+        draw_line(right_plane - h_len, hash_y, right_plane, hash_y, 1.2, Color::new(glow_col.r, glow_col.g, glow_col.b, h_alpha));
         hash_y += 50.0;
     }
 
@@ -840,7 +844,7 @@ fn render_court_boundaries(time: f32, arena: ArenaType) {
             draw_circle(tx, 38.0, 18.0, Color::new(1.0, 0.95, 0.8, 0.15));
 
             // Downward illumination cone
-            let target_x = if is_left { 200.0 } else { 600.0 };
+            let target_x = if is_left { court_width * 0.25 } else { court_width * 0.75 };
             draw_triangle(
                 Vec2::new(tx - 6.0, 44.0),
                 Vec2::new(tx + 6.0, 44.0),
@@ -849,19 +853,19 @@ fn render_court_boundaries(time: f32, arena: ArenaType) {
             );
         };
 
-        draw_floodlight_tower(LEFT_PLANE - 14.0, true);
-        draw_floodlight_tower(RIGHT_PLANE + 14.0, false);
+        draw_floodlight_tower(left_plane - 14.0, true);
+        draw_floodlight_tower(right_plane + 14.0, false);
     }
 }
 
 // =========================================================================
 // OPEN-SOURCE PERIMETER ADVERTISING BOARDS (Full-Screen Stadium Barrier)
 // =========================================================================
-fn render_perimeter_boards(time: f32, _arena: ArenaType, x_left: f32, x_right: f32) {
+fn render_perimeter_boards(time: f32, _arena: ArenaType, x_left: f32, x_right: f32, court_width: f32) {
     let board_y = 398.0;
     let board_h = 24.0;
     let board_start_x = 35.0;
-    let board_end_x = 765.0;
+    let board_end_x = court_width - 35.0;
     let board_w = board_end_x - board_start_x;
 
     // 1. Continuous side barriers extending to the display flanks
@@ -1000,6 +1004,7 @@ fn render_stadium_crowd(
     style: CrowdStyle,
     ball_pos: Vec2,
     cheer: CheerState,
+    court_width: f32,
 ) {
     let full_w = x_right - x_left;
     let num_rows = row_y_coords.len();
@@ -1062,12 +1067,15 @@ fn render_stadium_crowd(
             // Persistent Loyalty Assignment:
             // Blobs tendentially sit in the half of the player they support, with natural mixed random seating
             let seat_rand = ((col as f32 * 91.31 + r as f32 * 53.79).sin() * 43758.54).fract().abs();
-            let prob_left = if spec_x < 340.0 {
+            let net_x = court_width * 0.5;
+            let left_trans = net_x - 60.0;
+            let right_trans = net_x + 60.0;
+            let prob_left = if spec_x < left_trans {
                 0.82
-            } else if spec_x > 460.0 {
+            } else if spec_x > right_trans {
                 0.18
             } else {
-                0.82 - ((spec_x - 340.0) / 120.0) * 0.64
+                0.82 - ((spec_x - left_trans) / 120.0) * 0.64
             };
             let favored_side = if seat_rand < prob_left { PlayerSide::Left } else { PlayerSide::Right };
 

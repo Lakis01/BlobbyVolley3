@@ -133,6 +133,7 @@ impl Ball {
 
 #[derive(Debug, Clone)]
 pub struct PhysicWorld {
+    pub court_width: f32,
     pub blobs: [Blobby; 2],
     pub ball: Ball,
     pub events: Vec<MatchEvent>,
@@ -143,31 +144,56 @@ pub struct PhysicWorld {
 }
 
 impl PhysicWorld {
-    pub fn new() -> Self {
+    pub fn new_with_width(court_width: f32) -> Self {
+        let p1_x = court_width * 0.25;
+        let p2_x = court_width * 0.75;
         Self {
+            court_width,
             blobs: [
-                Blobby::new(200.0, GROUND_PLANE_HEIGHT),
-                Blobby::new(600.0, GROUND_PLANE_HEIGHT),
+                Blobby::new(p1_x, GROUND_PLANE_HEIGHT),
+                Blobby::new(p2_x, GROUND_PLANE_HEIGHT),
             ],
-            ball: Ball::new(200.0, STANDARD_BALL_HEIGHT),
+            ball: Ball::new(p1_x, STANDARD_BALL_HEIGHT),
             events: Vec::new(),
-            prev_ball_pos: Vec2::new(200.0, STANDARD_BALL_HEIGHT),
+            prev_ball_pos: Vec2::new(p1_x, STANDARD_BALL_HEIGHT),
             prev_blob_pos: [
-                Vec2::new(200.0, GROUND_PLANE_HEIGHT),
-                Vec2::new(600.0, GROUND_PLANE_HEIGHT),
+                Vec2::new(p1_x, GROUND_PLANE_HEIGHT),
+                Vec2::new(p2_x, GROUND_PLANE_HEIGHT),
             ],
             current_ball_side: PlayerSide::Left,
             blob_collision_cooldown: [0, 0],
         }
     }
 
+    pub fn new() -> Self {
+        Self::new_with_width(800.0)
+    }
+
+    #[inline]
+    pub fn net_x(&self) -> f32 {
+        self.court_width * 0.5
+    }
+
+    #[inline]
+    #[allow(dead_code)]
+    pub fn left_plane(&self) -> f32 {
+        0.0
+    }
+
+    #[inline]
+    pub fn right_plane(&self) -> f32 {
+        self.court_width
+    }
+
     pub fn reset_players(&mut self) {
-        self.blobs[0].pos = Vec2::new(200.0, GROUND_PLANE_HEIGHT);
+        let p1_x = self.court_width * 0.25;
+        let p2_x = self.court_width * 0.75;
+        self.blobs[0].pos = Vec2::new(p1_x, GROUND_PLANE_HEIGHT);
         self.blobs[0].vel = Vec2::ZERO;
         self.blobs[0].squash_factor = 1.0;
         self.blobs[0].squash_vel = 0.0;
 
-        self.blobs[1].pos = Vec2::new(600.0, GROUND_PLANE_HEIGHT);
+        self.blobs[1].pos = Vec2::new(p2_x, GROUND_PLANE_HEIGHT);
         self.blobs[1].vel = Vec2::ZERO;
         self.blobs[1].squash_factor = 1.0;
         self.blobs[1].squash_vel = 0.0;
@@ -178,13 +204,15 @@ impl PhysicWorld {
 
     pub fn reset_ball(&mut self, serving_side: Option<PlayerSide>) {
         let side = serving_side.unwrap_or(PlayerSide::Left);
+        let p1_x = self.court_width * 0.25;
+        let p2_x = self.court_width * 0.75;
         match side {
             PlayerSide::Left => {
-                self.ball.pos = Vec2::new(200.0, STANDARD_BALL_HEIGHT);
+                self.ball.pos = Vec2::new(p1_x, STANDARD_BALL_HEIGHT);
                 self.ball.angular_velocity = STANDARD_BALL_ANGULAR_VELOCITY;
             }
             PlayerSide::Right => {
-                self.ball.pos = Vec2::new(600.0, STANDARD_BALL_HEIGHT);
+                self.ball.pos = Vec2::new(p2_x, STANDARD_BALL_HEIGHT);
                 self.ball.angular_velocity = -STANDARD_BALL_ANGULAR_VELOCITY;
             }
         }
@@ -329,7 +357,7 @@ impl PhysicWorld {
             self.ball.vel.y = -self.ball.vel.y * 0.95;
             self.ball.vel.x *= 0.95;
             self.ball.pos.y = GROUND_PLANE_HEIGHT_MAX - BALL_RADIUS;
-            let side = if self.ball.pos.x > NET_POSITION_X {
+            let side = if self.ball.pos.x > self.net_x() {
                 PlayerSide::Right
             } else {
                 PlayerSide::Left
@@ -346,20 +374,20 @@ impl PhysicWorld {
             });
         }
         // Border right
-        else if self.ball.pos.x + BALL_RADIUS >= RIGHT_PLANE && self.ball.vel.x > 0.0 {
+        else if self.ball.pos.x + BALL_RADIUS >= self.right_plane() && self.ball.vel.x > 0.0 {
             self.ball.vel.x = -self.ball.vel.x;
-            self.ball.pos.x = RIGHT_PLANE - BALL_RADIUS;
+            self.ball.pos.x = self.right_plane() - BALL_RADIUS;
             self.events.push(MatchEvent::BallHitWall {
                 side: PlayerSide::Right,
             });
         }
         // Net vertical stem collision
         else if self.ball.pos.y > NET_SPHERE_POSITION
-            && (self.ball.pos.x - NET_POSITION_X).abs() < BALL_RADIUS + NET_RADIUS
+            && (self.ball.pos.x - self.net_x()).abs() < BALL_RADIUS + NET_RADIUS
         {
-            let right = self.ball.pos.x - NET_POSITION_X > 0.0;
+            let right = self.ball.pos.x - self.net_x() > 0.0;
             self.ball.vel.x = -self.ball.vel.x;
-            self.ball.pos.x = NET_POSITION_X
+            self.ball.pos.x = self.net_x()
                 + if right {
                     BALL_RADIUS + NET_RADIUS
                 } else {
@@ -373,7 +401,7 @@ impl PhysicWorld {
             self.events.push(MatchEvent::BallHitNet { side });
         } else {
             // Net rounded top cap collision
-            let net_top = Vec2::new(NET_POSITION_X, NET_SPHERE_POSITION);
+            let net_top = Vec2::new(self.net_x(), NET_SPHERE_POSITION);
             let dist_to_top = (self.ball.pos - net_top).length();
 
             if dist_to_top < NET_RADIUS + BALL_RADIUS {
@@ -441,7 +469,7 @@ impl PhysicWorld {
         self.handle_ball_world_collisions();
 
         // Check if ball crossed the net plane
-        let new_side = if self.ball.pos.x < NET_POSITION_X {
+        let new_side = if self.ball.pos.x < self.net_x() {
             PlayerSide::Left
         } else {
             PlayerSide::Right
@@ -453,19 +481,19 @@ impl PhysicWorld {
         }
 
         // Blobby net constraints
-        if self.blobs[0].pos.x + BLOBBY_LOWER_RADIUS > NET_POSITION_X - NET_RADIUS {
-            self.blobs[0].pos.x = NET_POSITION_X - NET_RADIUS - BLOBBY_LOWER_RADIUS;
+        if self.blobs[0].pos.x + BLOBBY_LOWER_RADIUS > self.net_x() - NET_RADIUS {
+            self.blobs[0].pos.x = self.net_x() - NET_RADIUS - BLOBBY_LOWER_RADIUS;
         }
-        if self.blobs[1].pos.x - BLOBBY_LOWER_RADIUS < NET_POSITION_X + NET_RADIUS {
-            self.blobs[1].pos.x = NET_POSITION_X + NET_RADIUS + BLOBBY_LOWER_RADIUS;
+        if self.blobs[1].pos.x - BLOBBY_LOWER_RADIUS < self.net_x() + NET_RADIUS {
+            self.blobs[1].pos.x = self.net_x() + NET_RADIUS + BLOBBY_LOWER_RADIUS;
         }
 
         // Blobby border constraints
         if self.blobs[0].pos.x < LEFT_PLANE {
             self.blobs[0].pos.x = LEFT_PLANE;
         }
-        if self.blobs[1].pos.x > RIGHT_PLANE {
-            self.blobs[1].pos.x = RIGHT_PLANE;
+        if self.blobs[1].pos.x > self.right_plane() {
+            self.blobs[1].pos.x = self.right_plane();
         }
 
         // Ball rotation update

@@ -28,8 +28,8 @@ impl NetRenderer {
         self.wobble += self.wobble_vel * dt;
     }
 
-    pub fn render(&self, time: f32) {
-        let x = NET_POSITION_X;
+    pub fn render(&self, time: f32, net_x: f32) {
+        let x = net_x;
         let top_y = NET_SPHERE_POSITION;
         let bot_y = GROUND_PLANE_HEIGHT_MAX;
         let rad = NET_RADIUS;

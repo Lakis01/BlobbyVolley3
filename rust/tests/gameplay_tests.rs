@@ -482,4 +482,118 @@ fn test_touch_counter_fault_and_dead_ball_physics() {
     assert!(physics.ball.vel.y < 0.0 || physics.ball.pos.y < 460.0);
 }
 
+#[test]
+fn test_court_size_and_enlarged_physics_world() {
+    use blobby_core::config::CourtSize;
+
+    assert_eq!(CourtSize::Standard.width(), 800.0);
+    assert_eq!(CourtSize::Wide.width(), 960.0);
+    assert_eq!(CourtSize::ExtraWide.width(), 1120.0);
+    assert_eq!(CourtSize::Colossal.width(), 1280.0);
+
+    // Test cycle
+    assert_eq!(CourtSize::Standard.next(), CourtSize::Wide);
+    assert_eq!(CourtSize::Wide.next(), CourtSize::ExtraWide);
+    assert_eq!(CourtSize::ExtraWide.next(), CourtSize::Colossal);
+    assert_eq!(CourtSize::Colossal.next(), CourtSize::Standard);
+
+    assert_eq!(CourtSize::Standard.prev(), CourtSize::Colossal);
+    assert_eq!(CourtSize::Colossal.prev(), CourtSize::ExtraWide);
+
+    // Test PhysicWorld initialized with custom court width
+    for &size in &[CourtSize::Standard, CourtSize::Wide, CourtSize::ExtraWide, CourtSize::Colossal] {
+        let w = size.width();
+        let mut p = PhysicWorld::new_with_width(w);
+
+        assert_eq!(p.court_width, w);
+        assert_eq!(p.net_x(), w * 0.5);
+        assert_eq!(p.left_plane(), 0.0);
+        assert_eq!(p.right_plane(), w);
+
+        // Blobby spawns at 25% and 75%
+        assert_eq!(p.blobs[0].pos.x, w * 0.25);
+        assert_eq!(p.blobs[1].pos.x, w * 0.75);
+
+        // Reset ball spawns at serving side quarter court
+        p.reset_ball(Some(PlayerSide::Left));
+        assert_eq!(p.ball.pos.x, w * 0.25);
+
+        p.reset_ball(Some(PlayerSide::Right));
+        assert_eq!(p.ball.pos.x, w * 0.75);
+
+        // Right wall bounce occurs at court_width
+        p.ball.pos = Vec2::new(w - 5.0, 400.0);
+        p.ball.vel = Vec2::new(10.0, 0.0);
+        p.step(PlayerInput::default(), PlayerInput::default(), true, true);
+        assert!(p.ball.vel.x < 0.0, "Ball must bounce off right wall at {}", w);
+        assert!(p.ball.pos.x <= w);
+    }
+}
+
+#[test]
+fn test_strictly_monotonous_ai_progression() {
+    use blobby_core::glicko::GlickoRating;
+
+    let difficulties = [
+        AiDifficulty::Novice,
+        AiDifficulty::Amateur,
+        AiDifficulty::Regular,
+        AiDifficulty::Master,
+        AiDifficulty::Pro,
+    ];
+
+    // 1. Verify index and cycle monotonicity
+    for i in 0..difficulties.len() {
+        assert_eq!(difficulties[i].to_index(), i);
+        assert_eq!(AiDifficulty::from_index(i), difficulties[i]);
+        if i + 1 < difficulties.len() {
+            assert_eq!(difficulties[i].next(), difficulties[i + 1]);
+            assert_eq!(difficulties[i + 1].prev(), difficulties[i]);
+        }
+    }
+
+    // 2. Verify strictly monotonous Glicko baseline ratings:
+    // Novice (1000) < Amateur (1250) < Regular (1500) < Master (1750) < Pro (2000)
+    let mut prev_rating = 0.0;
+    for diff in difficulties {
+        let (rating, _rd) = GlickoRating::ai_baseline(diff);
+        assert!(
+            rating > prev_rating,
+            "Difficulty {:?} rating {:.0} must be strictly greater than previous {:.0}",
+            diff,
+            rating,
+            prev_rating
+        );
+        prev_rating = rating;
+    }
+
+    // 3. Verify AI trajectory estimation respects enlarged court widths
+    let ball_pos = Vec2::new(100.0, 200.0);
+    let ball_vel = Vec2::new(15.0, -2.0);
+
+    let est_800 = estimate_x_at_y(ball_pos, ball_vel, 379.5, true, 800.0);
+    let est_1120 = estimate_x_at_y(ball_pos, ball_vel, 379.5, true, 1120.0);
+    assert!(est_800.is_some());
+    assert!(est_1120.is_some());
+
+    // 4. Verify AI controller updates and executes valid input on both standard and enlarged courts
+    for court_w in [800.0, 960.0, 1120.0, 1280.0] {
+        let mut p = PhysicWorld::new_with_width(court_w);
+        p.reset_ball(Some(PlayerSide::Left));
+
+        for diff in difficulties {
+            let mut bot_l = BotController::new(PlayerSide::Left, diff);
+            let mut bot_r = BotController::new(PlayerSide::Right, diff);
+
+            let inp_l = bot_l.update(&p, 0, PlayerSide::Left, true);
+            let inp_r = bot_r.update(&p, 0, PlayerSide::Left, true);
+
+            // Valid inputs without panics
+            let _ = inp_l.left || inp_l.right || inp_l.up;
+            let _ = inp_r.left || inp_r.right || inp_r.up;
+        }
+    }
+}
+
+
 

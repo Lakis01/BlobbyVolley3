@@ -7,6 +7,7 @@ pub const VIRTUAL_HEIGHT: f32 = 600.0;
 
 // Border boundaries
 pub const LEFT_PLANE: f32 = 0.0;
+#[allow(dead_code)]
 pub const RIGHT_PLANE: f32 = 800.0;
 
 // Ground plane
@@ -35,6 +36,7 @@ pub const STANDARD_BALL_HEIGHT: f32 = 269.0 + BALL_RADIUS; // 300.5
 pub const STANDARD_BALL_ANGULAR_VELOCITY: f32 = 0.1;
 
 // Volley ball net
+#[allow(dead_code)]
 pub const NET_POSITION_X: f32 = RIGHT_PLANE / 2.0; // 400.0
 #[allow(dead_code)]
 pub const NET_POSITION_Y: f32 = 438.0;

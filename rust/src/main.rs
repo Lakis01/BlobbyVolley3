@@ -243,6 +243,11 @@ async fn main() {
                                 };
                                 logic.score_to_win = score_to_win;
                             }
+                            render::ui::MenuItem::CourtSize => {
+                                let cur_cs = crate::config::CourtSize::from_index(config.court_size);
+                                let new_cs = if $forward { cur_cs.next() } else { cur_cs.prev() };
+                                config.court_size = new_cs.to_index();
+                            }
                             render::ui::MenuItem::Arena => arena = if $forward { arena.next() } else { arena.prev() },
                             render::ui::MenuItem::P1Color => {
                                 left_theme = if $forward { left_theme.next() } else { left_theme.prev() };
@@ -416,7 +421,8 @@ async fn main() {
                             let (cpu_r, cpu_rd) = GlickoRating::ai_baseline(difficulty);
                             active_match_opponent = Some((format!("CPU ({})", difficulty.name()), cpu_r, cpu_rd, "".to_string()));
                             logic = GameLogic::new(rule_mode, score_to_win);
-                            physics = PhysicWorld::new();
+                            let court_w = crate::config::CourtSize::from_index(config.court_size).width();
+                            physics = PhysicWorld::new_with_width(court_w);
                             physics.reset_players();
                             physics.reset_ball(Some(PlayerSide::Left));
                             logic.on_serve();
@@ -459,7 +465,8 @@ async fn main() {
                         GameMode::BotVsBot => {
                             active_match_opponent = None;
                             logic = GameLogic::new(rule_mode, score_to_win);
-                            physics = PhysicWorld::new();
+                            let court_w = crate::config::CourtSize::from_index(config.court_size).width();
+                            physics = PhysicWorld::new_with_width(court_w);
                             physics.reset_players();
                             physics.reset_ball(Some(PlayerSide::Left));
                             logic.on_serve();
@@ -648,7 +655,8 @@ async fn main() {
 
                     // Launch match
                     logic = GameLogic::new(rule_mode, score_to_win);
-                    physics = PhysicWorld::new();
+                    let court_w = crate::config::CourtSize::from_index(config.court_size).width();
+                    physics = PhysicWorld::new_with_width(court_w);
                     physics.reset_players();
                     physics.reset_ball(Some(PlayerSide::Left));
                     logic.on_serve();
@@ -1231,9 +1239,15 @@ async fn main() {
         cam_zoom_factor += (target_zoom - cam_zoom_factor) * cam_lerp;
 
         let shake = vfx.get_shake_offset();
-        let world_cam_target = Vec2::new(VIRTUAL_WIDTH * 0.5, cam_target_y) + shake;
-        let world_cam_w = cam_w / cam_zoom_factor;
-        let world_cam_h = cam_h / cam_zoom_factor;
+        let world_court_w = physics.court_width;
+        let world_cam_target = Vec2::new(world_court_w * 0.5, cam_target_y) + shake;
+        let (world_base_w, world_base_h) = if aspect >= world_court_w / VIRTUAL_HEIGHT {
+            (VIRTUAL_HEIGHT * aspect, VIRTUAL_HEIGHT)
+        } else {
+            (world_court_w, world_court_w / aspect)
+        };
+        let world_cam_w = world_base_w / cam_zoom_factor;
+        let world_cam_h = world_base_h / cam_zoom_factor;
         let world_cam_x0 = world_cam_target.x - world_cam_w * 0.5;
 
         // 1. World Camera for Arena, Blobs, Ball & Particles
@@ -1255,10 +1269,10 @@ async fn main() {
         };
 
         // 1. Render Arena Environment
-        render_arena(arena, global_time, world_cam_x0, world_cam_w, physics.ball.pos, cheer);
+        render_arena(arena, global_time, world_cam_x0, world_cam_w, physics.ball.pos, cheer, world_court_w);
 
         // 2. Render Volleyball Net
-        net_renderer.render(global_time);
+        net_renderer.render(global_time, physics.net_x());
 
         // 3. Render Procedural Jelly Blobbies
         render_blobby(
@@ -1302,6 +1316,7 @@ async fn main() {
                     EloSearchRange::from_index(config.elo_search_range),
                     rule_mode,
                     score_to_win,
+                    config.court_size,
                     arena,
                     left_theme,
                     right_theme,
@@ -1323,6 +1338,7 @@ async fn main() {
                     EloSearchRange::from_index(config.elo_search_range),
                     rule_mode,
                     score_to_win,
+                    config.court_size,
                     arena,
                     left_theme,
                     right_theme,
@@ -1447,6 +1463,7 @@ async fn main() {
                     config.high_ball_camera,
                     global_time,
                     online_serve_countdown,
+                    physics.court_width,
                 );
 
                 render_chat_overlay(&chat_log, is_typing_chat, &chat_input, global_time);
@@ -1467,6 +1484,7 @@ async fn main() {
                     config.high_ball_camera,
                     global_time,
                     None,
+                    physics.court_width,
                 );
                 render_pause_menu(pause_selected);
             }

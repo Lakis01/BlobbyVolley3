@@ -67,6 +67,7 @@ pub enum MenuItem {
     MatchmakingRange,
     Rules,
     PointsToWin,
+    CourtSize,
     Arena,
     P1Color,
     P2Color,
@@ -83,6 +84,7 @@ pub fn get_menu_items_for_mode(mode: GameMode) -> Vec<MenuItem> {
             MenuItem::AiDifficulty,
             MenuItem::Rules,
             MenuItem::PointsToWin,
+            MenuItem::CourtSize,
             MenuItem::Arena,
             MenuItem::P1Color,
             MenuItem::HighBallCamera,
@@ -94,6 +96,7 @@ pub fn get_menu_items_for_mode(mode: GameMode) -> Vec<MenuItem> {
             MenuItem::PlayerProfile,
             MenuItem::Rules,
             MenuItem::PointsToWin,
+            MenuItem::CourtSize,
             MenuItem::Arena,
             MenuItem::P1Color,
             MenuItem::P2Color,
@@ -116,6 +119,7 @@ pub fn get_menu_items_for_mode(mode: GameMode) -> Vec<MenuItem> {
             MenuItem::AiDifficulty,
             MenuItem::Rules,
             MenuItem::PointsToWin,
+            MenuItem::CourtSize,
             MenuItem::Arena,
             MenuItem::P1Color,
             MenuItem::P2Color,
@@ -203,6 +207,7 @@ pub fn render_hud(
     high_ball_camera: usize,
     time: f32,
     serve_countdown: Option<f32>,
+    court_width: f32,
 ) {
     let board_w = 640.0;
     let board_h = 62.0;
@@ -331,7 +336,8 @@ pub fn render_hud(
 
     // Off-Screen High Ball Indicator
     if ball_pos.y < 30.0 && (high_ball_camera == 0 || high_ball_camera == 2) {
-        let bx = ball_pos.x.clamp(25.0, VIRTUAL_WIDTH - 25.0);
+        let norm_x = (ball_pos.x / court_width) * VIRTUAL_WIDTH;
+        let bx = norm_x.clamp(25.0, VIRTUAL_WIDTH - 25.0);
         let pulse = (time * 6.0).sin().abs() * 0.3 + 0.7;
 
         // Vertical laser projection line from top of screen down into the court
@@ -367,6 +373,7 @@ pub fn render_main_menu(
     elo_range: EloSearchRange,
     rule_mode: RuleMode,
     score_to_win: i32,
+    court_size: usize,
     arena: ArenaType,
     left_theme: BlobTheme,
     right_theme: BlobTheme,
@@ -436,6 +443,7 @@ pub fn render_main_menu(
             MenuItem::MatchmakingRange => (Some("Matchmaking Range:"), elo_range.name().to_string()),
             MenuItem::Rules => (Some("Rules:"), rule_mode.name().to_string()),
             MenuItem::PointsToWin => (Some("Points to Win:"), format!("{}", score_to_win)),
+            MenuItem::CourtSize => (Some("Court Width:"), crate::config::CourtSize::from_index(court_size).name().to_string()),
             MenuItem::Arena => (Some("Arena:"), arena.name().to_string()),
             MenuItem::P1Color => (Some("P1 Color:"), left_theme.name().to_string()),
             MenuItem::P2Color => (Some("P2 Color:"), right_theme.name().to_string()),
@@ -542,48 +550,37 @@ pub fn render_main_menu(
     draw_rectangle(pod_x, pod_y, pod_w, pod_h, Color::new(0.08, 0.1, 0.18, 0.92));
     draw_rectangle_lines(pod_x, pod_y, pod_w, pod_h, 1.5, Color::new(0.3, 0.5, 0.85, 0.5));
 
-    // Pod Header
-    let pod_title = "COLOR PREVIEW";
-    let pt_dim = measure_text(pod_title, None, 14, 1.0);
-    draw_text(pod_title, pod_x + (pod_w - pt_dim.width) * 0.5, pod_y + 22.0, 14.0, Color::new(0.2, 0.85, 1.0, 1.0));
-    draw_line(pod_x + 15.0, pod_y + 30.0, pod_x + pod_w - 15.0, pod_y + 30.0, 1.0, Color::new(0.3, 0.5, 0.85, 0.4));
-
     let mouse_target = virt_mouse.unwrap_or(Vec2::new(pod_x - 100.0, pod_y + 200.0));
 
     // Section 1: Player 1 Blob
     let is_p1_active = items.get(selected_item) == Some(&MenuItem::P1Color);
     let p1_label = format!("P1: {}", left_theme.name());
-    let p1_dim = measure_text(&p1_label, None, 12, 1.0);
-    draw_text(&p1_label, pod_x + (pod_w - p1_dim.width) * 0.5, pod_y + 48.0, 12.0, if is_p1_active { Color::new(1.0, 0.9, 0.3, 1.0) } else { Color::new(0.8, 0.85, 0.92, 0.85) });
+    let p1_dim = measure_text(&p1_label, None, 13, 1.0);
+    draw_text(&p1_label, pod_x + (pod_w - p1_dim.width) * 0.5, pod_y + 28.0, 13.0, if is_p1_active { Color::new(1.0, 0.9, 0.3, 1.0) } else { Color::new(0.8, 0.85, 0.92, 0.85) });
 
-    let p1_center = Vec2::new(pod_x + pod_w * 0.5, pod_y + 120.0);
+    let p1_center = Vec2::new(pod_x + pod_w * 0.5, pod_y + 108.0);
     if is_p1_active {
         let pulse = (time * 5.0).sin().abs() * 0.2 + 0.8;
         draw_circle_lines(p1_center.x, p1_center.y - 10.0, 48.0, 1.5, Color::new(0.2, 0.85, 1.0, pulse * 0.7));
     }
-    crate::render::blob::render_preview_blobby(p1_center, 1.15, PlayerSide::Left, left_theme, mouse_target, time);
+    crate::render::blob::render_preview_blobby(p1_center, 1.18, PlayerSide::Left, left_theme, mouse_target, time);
 
     // Section Divider
-    draw_line(pod_x + 20.0, pod_y + 215.0, pod_x + pod_w - 20.0, pod_y + 215.0, 1.0, Color::new(0.3, 0.5, 0.85, 0.35));
+    draw_line(pod_x + 20.0, pod_y + 212.0, pod_x + pod_w - 20.0, pod_y + 212.0, 1.0, Color::new(0.3, 0.5, 0.85, 0.35));
 
     // Section 2: Player 2 / CPU Blob
     let is_p2_active = items.get(selected_item) == Some(&MenuItem::P2Color);
     let p2_prefix = if game_mode == GameMode::TwoPlayerLocal { "P2" } else { "CPU" };
     let p2_label = format!("{}: {}", p2_prefix, right_theme.name());
-    let p2_dim = measure_text(&p2_label, None, 12, 1.0);
-    draw_text(&p2_label, pod_x + (pod_w - p2_dim.width) * 0.5, pod_y + 235.0, 12.0, if is_p2_active { Color::new(1.0, 0.9, 0.3, 1.0) } else { Color::new(0.8, 0.85, 0.92, 0.85) });
+    let p2_dim = measure_text(&p2_label, None, 13, 1.0);
+    draw_text(&p2_label, pod_x + (pod_w - p2_dim.width) * 0.5, pod_y + 236.0, 13.0, if is_p2_active { Color::new(1.0, 0.9, 0.3, 1.0) } else { Color::new(0.8, 0.85, 0.92, 0.85) });
 
-    let p2_center = Vec2::new(pod_x + pod_w * 0.5, pod_y + 310.0);
+    let p2_center = Vec2::new(pod_x + pod_w * 0.5, pod_y + 316.0);
     if is_p2_active {
         let pulse = (time * 5.0).sin().abs() * 0.2 + 0.8;
         draw_circle_lines(p2_center.x, p2_center.y - 10.0, 48.0, 1.5, Color::new(0.2, 0.85, 1.0, pulse * 0.7));
     }
-    crate::render::blob::render_preview_blobby(p2_center, 1.15, PlayerSide::Right, right_theme, mouse_target, time + 1.5);
-
-    // Footer note inside pod
-    let hint = "Animated Live Preview";
-    let hint_dim = measure_text(hint, None, 10, 1.0);
-    draw_text(hint, pod_x + (pod_w - hint_dim.width) * 0.5, pod_y + pod_h - 14.0, 10.0, Color::new(0.5, 0.6, 0.75, 0.7));
+    crate::render::blob::render_preview_blobby(p2_center, 1.18, PlayerSide::Right, right_theme, mouse_target, time + 1.5);
 
     // Footer Controls Guide
     let guide = "Controls: [Left/Right] Cycle | [Enter] Confirm & Start | [L] Leaderboards | [ESC] Quit Game | [F11] Fullscreen";

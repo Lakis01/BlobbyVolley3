@@ -30,6 +30,8 @@ pub struct UserConfig {
     pub elo_search_range: usize,
     #[serde(default)]
     pub high_ball_camera: usize, // 0 = Indicator, 1 = DynamicZoom, 2 = Both
+    #[serde(default)]
+    pub court_size: usize,       // 0 = Standard (800px), 1 = Wide (960px), 2 = ExtraWide (1120px), 3 = Colossal (1280px)
 }
 
 pub fn default_elo_range() -> usize {
@@ -415,6 +417,71 @@ impl Default for UserConfig {
             country_code: "".to_string(),
             elo_search_range: 1, // Balanced (±100)
             high_ball_camera: 0, // Off-Screen Indicator by default
+            court_size: 0,       // Standard (800px) by default
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CourtSize {
+    Standard,  // 800.0 px
+    Wide,      // 960.0 px (+20%)
+    ExtraWide, // 1120.0 px (+40%)
+    Colossal,  // 1280.0 px (+60%)
+}
+
+impl CourtSize {
+    pub fn width(self) -> f32 {
+        match self {
+            CourtSize::Standard => 800.0,
+            CourtSize::Wide => 960.0,
+            CourtSize::ExtraWide => 1120.0,
+            CourtSize::Colossal => 1280.0,
+        }
+    }
+
+    pub fn name(self) -> &'static str {
+        match self {
+            CourtSize::Standard => "Standard (800px)",
+            CourtSize::Wide => "Wide (960px)",
+            CourtSize::ExtraWide => "Extra Wide (1120px)",
+            CourtSize::Colossal => "Colossal (1280px)",
+        }
+    }
+
+    pub fn from_index(idx: usize) -> Self {
+        match idx {
+            1 => CourtSize::Wide,
+            2 => CourtSize::ExtraWide,
+            3 => CourtSize::Colossal,
+            _ => CourtSize::Standard,
+        }
+    }
+
+    pub fn to_index(self) -> usize {
+        match self {
+            CourtSize::Standard => 0,
+            CourtSize::Wide => 1,
+            CourtSize::ExtraWide => 2,
+            CourtSize::Colossal => 3,
+        }
+    }
+
+    pub fn next(self) -> Self {
+        match self {
+            CourtSize::Standard => CourtSize::Wide,
+            CourtSize::Wide => CourtSize::ExtraWide,
+            CourtSize::ExtraWide => CourtSize::Colossal,
+            CourtSize::Colossal => CourtSize::Standard,
+        }
+    }
+
+    pub fn prev(self) -> Self {
+        match self {
+            CourtSize::Standard => CourtSize::Colossal,
+            CourtSize::Wide => CourtSize::Standard,
+            CourtSize::ExtraWide => CourtSize::Wide,
+            CourtSize::Colossal => CourtSize::ExtraWide,
         }
     }
 }
