@@ -5,4 +5,5 @@ pub mod rules;
 pub mod ai;
 pub mod net;
 pub mod audio;
+pub mod config;
 

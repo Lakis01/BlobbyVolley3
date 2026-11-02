@@ -229,3 +229,78 @@ fn test_opus_sound_decoding() {
     assert_eq!(&wav_chat[0..4], b"RIFF");
     assert_eq!(&wav_chat[8..12], b"WAVE");
 }
+
+#[test]
+fn test_all_five_ai_difficulty_tiers() {
+    let tiers = [
+        AiDifficulty::Novice,
+        AiDifficulty::Amateur,
+        AiDifficulty::Regular,
+        AiDifficulty::Master,
+        AiDifficulty::Pro,
+    ];
+
+    assert_eq!(tiers[0].name(), "Novice");
+    assert_eq!(tiers[1].name(), "Amateur");
+    assert_eq!(tiers[2].name(), "Regular");
+    assert_eq!(tiers[3].name(), "Master");
+    assert_eq!(tiers[4].name(), "Pro");
+
+    // Test cycling forward and backward
+    for i in 0..5 {
+        assert_eq!(tiers[i].to_index(), i);
+        assert_eq!(AiDifficulty::from_index(i), tiers[i]);
+        assert_eq!(tiers[i].next(), tiers[(i + 1) % 5]);
+        assert_eq!(tiers[i].prev(), tiers[(i + 4) % 5]);
+    }
+
+    // Verify all 5 bots can be instantiated and make decisions without panic
+    let physics = PhysicWorld::new();
+    for diff in tiers {
+        let mut bot = BotController::new(PlayerSide::Right, diff);
+        let input = bot.update(&physics, 0, PlayerSide::Left, true);
+        let _ = input; // Bot returns valid player input
+    }
+}
+
+#[test]
+fn test_user_config_persistence() {
+    use blobby_core::config::UserConfig;
+
+    let default_cfg = UserConfig::default();
+    assert_eq!(default_cfg.player2_name, "Player 2");
+    assert_eq!(default_cfg.score_to_win, 15);
+    assert_eq!(default_cfg.rule_mode_index, 0);
+
+    let json = serde_json::to_string(&default_cfg).expect("Serialization must succeed");
+    let loaded: UserConfig = serde_json::from_str(&json).expect("Deserialization must succeed");
+    assert_eq!(loaded.player1_name, default_cfg.player1_name);
+    assert_eq!(loaded.player2_name, default_cfg.player2_name);
+    assert_eq!(loaded.score_to_win, default_cfg.score_to_win);
+}
+
+#[test]
+fn test_master_server_query_structure() {
+    let xml_sample = r#"<?xml version="1.0" encoding="utf-8"?>
+<onlineserver>
+	<server>
+		<var host="blobbyvolley.de"/>
+		<var port="12345"/>
+	</server>
+	<server>
+		<var host="167.235.181.41"/>
+		<var port="4321"/>
+	</server>
+</onlineserver>"#;
+
+    let parsed = blobby_core::net::parse_server_xml(xml_sample);
+    assert_eq!(parsed.len(), 2);
+    assert_eq!(parsed[0].host, "blobbyvolley.de");
+    assert_eq!(parsed[0].port, 12345);
+    assert_eq!(parsed[1].host, "167.235.181.41");
+    assert_eq!(parsed[1].port, 4321);
+
+    let servers = blobby_core::net::query_master_server();
+    assert!(!servers.is_empty(), "Server browser must at least return LAN / local room option");
+}
+

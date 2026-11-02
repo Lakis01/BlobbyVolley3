@@ -1,0 +1,24 @@
+# Maintainer: gratis01 <gratis01@local>
+pkgname=blobby-volley-3
+pkgver=3.0.0
+pkgrel=1
+pkgdesc="Blobby Volley 3 - Remastered 2026 Edition in Rust"
+arch=('x86_64')
+url="https://github.com/Lakis01/BlobbyVolley3"
+license=('GPL2')
+depends=('alsa-lib' 'libglvnd' 'libx11' 'libxi')
+makedepends=('cargo' 'rust')
+source=("$pkgname-$pkgver.tar.gz")
+sha256sums=('SKIP')
+
+build() {
+    cd "$srcdir"
+    cargo build --release --locked
+}
+
+package() {
+    install -Dm755 "target/release/blobby" "$pkgdir/usr/bin/blobby"
+    install -Dm644 "packaging/blobby.desktop" "$pkgdir/usr/share/applications/blobby.desktop"
+    install -Dm644 "packaging/blobby.png" "$pkgdir/usr/share/pixmaps/blobby.png"
+    install -Dm644 "COPYING" "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
+}

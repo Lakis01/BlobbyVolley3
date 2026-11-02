@@ -11,6 +11,7 @@ mod vfx;
 mod input;
 mod net;
 mod render;
+mod config;
 
 use constants::*;
 use physics::{PhysicWorld, MatchEvent, PlayerSide};
@@ -18,18 +19,21 @@ use rules::{GameLogic, RuleMode};
 use ai::{BotController, AiDifficulty};
 use audio::AudioManager;
 use vfx::VfxManager;
-use net::{NetworkHost, NetworkClient, NetEvent, get_local_ip, DEFAULT_PORT};
+use net::{NetworkHost, NetworkClient, NetEvent, ServerEntry, query_master_server, get_local_ip, DEFAULT_PORT};
 use render::blob::{render_blobby, BlobTheme};
 use render::ball::{render_ball, BallTrail};
 use render::net::NetRenderer;
 use render::arenas::{render_arena, ArenaType};
 use render::ui::*;
+use config::UserConfig;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 enum AppState {
     MainMenu,
+    PlayerSetup { is_two_player: bool, active_field: usize },
     HostLobby,
     JoinScreen,
+    ServerBrowser { selected_idx: usize, servers: Vec<ServerEntry>, is_refreshing: bool },
     Playing,
     Paused,
     Victory(PlayerSide),
@@ -48,19 +52,33 @@ fn window_conf() -> Conf {
 
 #[macroquad::main(window_conf)]
 async fn main() {
+    let mut config = UserConfig::load();
+
     let mut audio = AudioManager::new().await;
     let mut vfx = VfxManager::new();
     let mut net_renderer = NetRenderer::new();
     let mut ball_trail = BallTrail::new();
 
-    // Default match configurations
+    // Player profiles & identities
+    let mut player1_name = config.player1_name.clone();
+    let mut player2_name = config.player2_name.clone();
+
+    // Match configurations from persistent user config
     let mut game_mode = GameMode::SinglePlayer;
-    let mut difficulty = AiDifficulty::Master;
-    let mut rule_mode = RuleMode::Modern;
-    let mut score_to_win = 15;
-    let mut arena = ArenaType::SunsetBeach;
-    let mut left_theme = BlobTheme::ElectricCyan;
-    let mut right_theme = BlobTheme::SunsetOrange;
+    let mut difficulty = AiDifficulty::from_index(config.difficulty_index);
+    let mut rule_mode = RuleMode::from_index(config.rule_mode_index);
+    let mut score_to_win = config.score_to_win;
+    let mut arena = ArenaType::from_index(config.arena_index);
+    let mut left_theme = BlobTheme::from_index(config.left_theme_index);
+    let mut right_theme = BlobTheme::from_index(config.right_theme_index);
+    let mut fullscreen = config.fullscreen;
+
+    if fullscreen {
+        macroquad::window::set_fullscreen(true);
+    }
+    if config.sound_muted {
+        audio.is_muted = true;
+    }
 
     let mut state = AppState::MainMenu;
     let mut menu_selected = 0;
@@ -86,117 +104,348 @@ async fn main() {
     let mut physics_accumulator = 0.0;
     let mut global_time = 0.0;
 
+    // Helper closure to save configuration
+    let save_config = |cfg: &mut UserConfig,
+                       p1: &str,
+                       p2: &str,
+                       fs: bool,
+                       muted: bool,
+                       score: i32,
+                       ar: ArenaType,
+                       diff: AiDifficulty,
+                       rm: RuleMode,
+                       lt: BlobTheme,
+                       rt: BlobTheme| {
+        cfg.player1_name = p1.to_string();
+        cfg.player2_name = p2.to_string();
+        cfg.fullscreen = fs;
+        cfg.sound_muted = muted;
+        cfg.score_to_win = score;
+        cfg.arena_index = ar.to_index();
+        cfg.difficulty_index = diff.to_index();
+        cfg.rule_mode_index = rm.to_index();
+        cfg.left_theme_index = lt.to_index();
+        cfg.right_theme_index = rt.to_index();
+        cfg.save();
+    };
+
     loop {
         let frame_dt = get_frame_time().min(0.05);
         global_time += frame_dt;
 
+        // Viewport coordinate transformation for virtual 800x600 resolution
+        let screen_w = screen_width();
+        let screen_h = screen_height();
+        let aspect = screen_w / screen_h;
+        let (cam_w, cam_h) = if aspect >= VIRTUAL_WIDTH / VIRTUAL_HEIGHT {
+            (VIRTUAL_HEIGHT * aspect, VIRTUAL_HEIGHT)
+        } else {
+            (VIRTUAL_WIDTH, VIRTUAL_WIDTH / aspect)
+        };
+        let cam_target = Vec2::new(VIRTUAL_WIDTH * 0.5, VIRTUAL_HEIGHT * 0.5);
+        let cam_x0 = cam_target.x - cam_w * 0.5;
+        let cam_y0 = cam_target.y - cam_h * 0.5;
+        let (mx, my) = mouse_position();
+        let virt_mouse = Vec2::new(
+            cam_x0 + (mx / screen_w) * cam_w,
+            cam_y0 + (my / screen_h) * cam_h,
+        );
+
+        // Global Fullscreen toggle (F11 or Alt+Enter)
+        let alt_enter = (is_key_down(KeyCode::LeftAlt) || is_key_down(KeyCode::RightAlt))
+            && is_key_pressed(KeyCode::Enter);
+        if is_key_pressed(KeyCode::F11) || alt_enter {
+            fullscreen = !fullscreen;
+            macroquad::window::set_fullscreen(fullscreen);
+            config.fullscreen = fullscreen;
+            config.save();
+        }
+
         // Global Mute toggle (M)
         if !is_typing_chat && state != AppState::JoinScreen && is_key_pressed(KeyCode::M) {
             audio.toggle_mute();
+            config.sound_muted = audio.is_muted;
+            config.save();
         }
 
         match state {
             AppState::MainMenu => {
-                // Menu Navigation
+                let layouts = get_main_menu_layout();
+
+                // Keyboard Menu Navigation (Up / Down)
                 if is_key_pressed(KeyCode::Up) || is_key_pressed(KeyCode::W) {
-                    menu_selected = if menu_selected == 0 { 7 } else { menu_selected - 1 };
+                    menu_selected = if menu_selected == 0 { 9 } else { menu_selected - 1 };
                 }
                 if is_key_pressed(KeyCode::Down) || is_key_pressed(KeyCode::S) {
-                    menu_selected = (menu_selected + 1) % 8;
+                    menu_selected = (menu_selected + 1) % 10;
                 }
 
-                // Change settings left/right
-                let left_pressed = is_key_pressed(KeyCode::Left) || is_key_pressed(KeyCode::A);
-                let right_pressed = is_key_pressed(KeyCode::Right) || is_key_pressed(KeyCode::D);
-
-                if left_pressed || right_pressed {
-                    match menu_selected {
-                        1 => game_mode = game_mode.next(),
+                // Helper to cycle a specific setting (forward or backward)
+                let mut cycle_setting = |idx: usize, forward: bool| {
+                    match idx {
+                        1 => game_mode = if forward { game_mode.next() } else { game_mode.prev() },
                         2 => {
-                            difficulty = difficulty.next();
+                            // Player Profile: click opens player profile setup
+                        }
+                        3 => {
+                            difficulty = if forward { difficulty.next() } else { difficulty.prev() };
                             bot_left.difficulty = difficulty;
                             bot_right.difficulty = difficulty;
                         }
-                        3 => {
-                            rule_mode = match rule_mode {
-                                RuleMode::Modern => RuleMode::Classic,
-                                RuleMode::Classic => RuleMode::Modern,
-                            };
+                        4 => {
+                            rule_mode = if forward { rule_mode.next() } else { rule_mode.prev() };
                             logic.rule_mode = rule_mode;
                         }
-                        4 => {
+                        5 => {
                             score_to_win = match score_to_win {
-                                5 => 10,
-                                10 => 15,
-                                15 => 21,
-                                _ => 5,
+                                5 => if forward { 10 } else { 21 },
+                                10 => if forward { 15 } else { 5 },
+                                15 => if forward { 21 } else { 10 },
+                                _ => if forward { 5 } else { 15 },
                             };
                             logic.score_to_win = score_to_win;
                         }
-                        5 => arena = arena.next(),
-                        6 => left_theme = left_theme.next(),
-                        7 => right_theme = right_theme.next(),
+                        6 => arena = if forward { arena.next() } else { arena.prev() },
+                        7 => left_theme = if forward { left_theme.next() } else { left_theme.prev() },
+                        8 => right_theme = if forward { right_theme.next() } else { right_theme.prev() },
+                        9 => {
+                            fullscreen = !fullscreen;
+                            macroquad::window::set_fullscreen(fullscreen);
+                        }
                         _ => {}
                     }
+                    save_config(
+                        &mut config,
+                        &player1_name,
+                        &player2_name,
+                        fullscreen,
+                        audio.is_muted,
+                        score_to_win,
+                        arena,
+                        difficulty,
+                        rule_mode,
+                        left_theme,
+                        right_theme,
+                    );
+                };
+
+                // Keyboard Left/Right to change value of highlighted row
+                if is_key_pressed(KeyCode::Left) || is_key_pressed(KeyCode::A) {
+                    cycle_setting(menu_selected, false);
+                }
+                if is_key_pressed(KeyCode::Right) || is_key_pressed(KeyCode::D) {
+                    cycle_setting(menu_selected, true);
                 }
 
-                // Start game on Space / Enter
-                if is_key_pressed(KeyCode::Space) || is_key_pressed(KeyCode::Enter) {
-                    match menu_selected {
-                        0 => {
-                            match game_mode {
-                                GameMode::HostOnline => {
-                                    if let Ok(host) = NetworkHost::bind(DEFAULT_PORT) {
-                                        net_host = Some(host);
-                                        state = AppState::HostLobby;
-                                    }
-                                }
-                                GameMode::JoinOnline => {
-                                    state = AppState::JoinScreen;
-                                }
-                                _ => {
-                                    // Start local match
-                                    logic = GameLogic::new(rule_mode, score_to_win);
-                                    physics = PhysicWorld::new();
-                                    physics.reset_players();
-                                    physics.reset_ball(Some(PlayerSide::Left));
-                                    logic.on_serve();
-                                    bot_left = BotController::new(PlayerSide::Left, difficulty);
-                                    bot_right = BotController::new(PlayerSide::Right, difficulty);
-                                    bot_left.reset_rally();
-                                    bot_right.reset_rally();
-                                    state = AppState::Playing;
-                                    audio.play_whistle();
-                                }
+                // Mouse click handler
+                let mouse_clicked = is_mouse_button_pressed(MouseButton::Left);
+                let mut action_start_match = false;
+                let mut action_open_profile = false;
+
+                if mouse_clicked {
+                    for layout in &layouts {
+                        let i = layout.index;
+                        // 1. Check Left Arrow Button
+                        if let Some(l_rect) = layout.left_arrow_rect {
+                            if l_rect.contains(virt_mouse) {
+                                menu_selected = i;
+                                cycle_setting(i, false);
+                                audio.play_ball_hit(0.2);
+                                continue;
                             }
                         }
-                        1 => game_mode = game_mode.next(),
-                        2 => {
-                            difficulty = difficulty.next();
-                            bot_left.difficulty = difficulty;
-                            bot_right.difficulty = difficulty;
+                        // 2. Check Right Arrow Button
+                        if let Some(r_rect) = layout.right_arrow_rect {
+                            if r_rect.contains(virt_mouse) {
+                                menu_selected = i;
+                                cycle_setting(i, true);
+                                audio.play_ball_hit(0.2);
+                                continue;
+                            }
                         }
-                        3 => {
-                            rule_mode = match rule_mode {
-                                RuleMode::Modern => RuleMode::Classic,
-                                RuleMode::Classic => RuleMode::Modern,
-                            };
-                            logic.rule_mode = rule_mode;
+                        // 3. Check Row Body (outside arrow buttons)
+                        if layout.row_rect.contains(virt_mouse) {
+                            menu_selected = i;
+                            if i == 2 {
+                                action_open_profile = true;
+                            } else {
+                                // Clicking the center label/body of ANY setting row confirms and starts match!
+                                action_start_match = true;
+                            }
+                            break;
                         }
-                        4 => {
-                            score_to_win = match score_to_win {
-                                5 => 10,
-                                10 => 15,
-                                15 => 21,
-                                _ => 5,
-                            };
-                            logic.score_to_win = score_to_win;
-                        }
-                        5 => arena = arena.next(),
-                        6 => left_theme = left_theme.next(),
-                        7 => right_theme = right_theme.next(),
-                        _ => {}
                     }
+                }
+
+                // Keyboard Space or Enter confirms and starts match (or opens profile if row 2)
+                if is_key_pressed(KeyCode::Space) || is_key_pressed(KeyCode::Enter) {
+                    if menu_selected == 2 {
+                        action_open_profile = true;
+                    } else {
+                        action_start_match = true;
+                    }
+                }
+
+                if action_open_profile {
+                    state = AppState::PlayerSetup {
+                        is_two_player: game_mode == GameMode::TwoPlayerLocal,
+                        active_field: 0,
+                    };
+                    audio.play_ball_hit(0.3);
+                } else if action_start_match {
+                    save_config(
+                        &mut config,
+                        &player1_name,
+                        &player2_name,
+                        fullscreen,
+                        audio.is_muted,
+                        score_to_win,
+                        arena,
+                        difficulty,
+                        rule_mode,
+                        left_theme,
+                        right_theme,
+                    );
+
+                    match game_mode {
+                        GameMode::TwoPlayerLocal => {
+                            // Prompt player 2 name on starting 2-player mode
+                            state = AppState::PlayerSetup {
+                                is_two_player: true,
+                                active_field: 1, // Default focus on player 2
+                            };
+                            audio.play_ball_hit(0.3);
+                        }
+                        GameMode::HostOnline => {
+                            if let Ok(host) = NetworkHost::bind(DEFAULT_PORT) {
+                                net_host = Some(host);
+                                state = AppState::HostLobby;
+                            }
+                        }
+                        GameMode::JoinOnline => {
+                            state = AppState::JoinScreen;
+                        }
+                        GameMode::ServerBrowser => {
+                            let servers = query_master_server();
+                            state = AppState::ServerBrowser {
+                                selected_idx: 0,
+                                servers,
+                                is_refreshing: false,
+                            };
+                        }
+                        _ => {
+                            // SinglePlayer or BotVsBot: start immediately!
+                            logic = GameLogic::new(rule_mode, score_to_win);
+                            physics = PhysicWorld::new();
+                            physics.reset_players();
+                            physics.reset_ball(Some(PlayerSide::Left));
+                            logic.on_serve();
+                            bot_left = BotController::new(PlayerSide::Left, difficulty);
+                            bot_right = BotController::new(PlayerSide::Right, difficulty);
+                            bot_left.reset_rally();
+                            bot_right.reset_rally();
+                            state = AppState::Playing;
+                            audio.play_whistle();
+                        }
+                    }
+                }
+            }
+
+            AppState::PlayerSetup { is_two_player, mut active_field } => {
+                // Character input
+                while let Some(c) = get_char_pressed() {
+                    if c.is_alphanumeric() || c == ' ' || c == '_' || c == '-' {
+                        if active_field == 0 && player1_name.len() < 16 {
+                            player1_name.push(c);
+                        } else if active_field == 1 && player2_name.len() < 16 {
+                            player2_name.push(c);
+                        }
+                    }
+                }
+
+                if is_key_pressed(KeyCode::Backspace) {
+                    if active_field == 0 {
+                        player1_name.pop();
+                    } else {
+                        player2_name.pop();
+                    }
+                }
+
+                // Switch fields via Tab or Up/Down
+                if is_two_player && (is_key_pressed(KeyCode::Tab) || is_key_pressed(KeyCode::Up) || is_key_pressed(KeyCode::Down)) {
+                    active_field = 1 - active_field;
+                    state = AppState::PlayerSetup { is_two_player, active_field };
+                }
+
+                // Confirm and start match on Enter
+                if is_key_pressed(KeyCode::Enter) {
+                    if player1_name.trim().is_empty() {
+                        player1_name = "Player 1".to_string();
+                    }
+                    if player2_name.trim().is_empty() {
+                        player2_name = "Player 2".to_string();
+                    }
+                    save_config(
+                        &mut config,
+                        &player1_name,
+                        &player2_name,
+                        fullscreen,
+                        audio.is_muted,
+                        score_to_win,
+                        arena,
+                        difficulty,
+                        rule_mode,
+                        left_theme,
+                        right_theme,
+                    );
+
+                    // Launch match
+                    logic = GameLogic::new(rule_mode, score_to_win);
+                    physics = PhysicWorld::new();
+                    physics.reset_players();
+                    physics.reset_ball(Some(PlayerSide::Left));
+                    logic.on_serve();
+                    bot_left = BotController::new(PlayerSide::Left, difficulty);
+                    bot_right = BotController::new(PlayerSide::Right, difficulty);
+                    bot_left.reset_rally();
+                    bot_right.reset_rally();
+                    state = AppState::Playing;
+                    audio.play_whistle();
+                }
+
+                if is_key_pressed(KeyCode::Escape) {
+                    state = AppState::MainMenu;
+                }
+            }
+
+            AppState::ServerBrowser { ref mut selected_idx, ref mut servers, ref mut is_refreshing } => {
+                let num_servers = servers.len();
+                if num_servers > 0 {
+                    if is_key_pressed(KeyCode::Up) || is_key_pressed(KeyCode::W) {
+                        *selected_idx = if *selected_idx == 0 { num_servers - 1 } else { *selected_idx - 1 };
+                    }
+                    if is_key_pressed(KeyCode::Down) || is_key_pressed(KeyCode::S) {
+                        *selected_idx = (*selected_idx + 1) % num_servers;
+                    }
+                }
+
+                if is_key_pressed(KeyCode::R) {
+                    *is_refreshing = true;
+                    *servers = query_master_server();
+                    *is_refreshing = false;
+                }
+
+                if is_key_pressed(KeyCode::Enter) && num_servers > 0 {
+                    let s = &servers[*selected_idx];
+                    join_ip_input = format!("{}:{}", s.host, s.port);
+                    let mut client = NetworkClient::new();
+                    client.connect(&join_ip_input);
+                    net_client = Some(client);
+                    state = AppState::JoinScreen;
+                }
+
+                if is_key_pressed(KeyCode::Escape) {
+                    state = AppState::MainMenu;
                 }
             }
 
@@ -207,7 +456,6 @@ async fn main() {
                 } else if let Some(ref mut host) = net_host {
                     host.update();
                     if host.is_client_connected {
-                        // Opponent connected! Initialize authoritative match
                         logic = GameLogic::new(rule_mode, score_to_win);
                         physics = PhysicWorld::new();
                         physics.reset_players();
@@ -225,7 +473,6 @@ async fn main() {
                     net_client = None;
                     state = AppState::MainMenu;
                 } else {
-                    // Text typing for server address
                     while let Some(c) = get_char_pressed() {
                         if (c.is_ascii_digit() || c == '.' || c == ':') && join_ip_input.len() < 24 {
                             join_ip_input.push(c);
@@ -273,7 +520,7 @@ async fn main() {
                         chat_input.pop();
                     }
                     if is_key_pressed(KeyCode::Enter) && !chat_input.trim().is_empty() {
-                        let my_name = if net_host.is_some() { "Host" } else { "Client" };
+                        let my_name = player1_name.as_str();
                         let text = chat_input.clone();
                         chat_log.push((my_name.to_string(), text.clone(), global_time));
                         audio.play_score();
@@ -290,7 +537,6 @@ async fn main() {
                         is_typing_chat = false;
                     }
                 } else {
-                    // Open chat on 'T' or 'C'
                     if is_key_pressed(KeyCode::T) || is_key_pressed(KeyCode::C) {
                         is_typing_chat = true;
                         chat_input.clear();
@@ -302,17 +548,13 @@ async fn main() {
                     }
                 }
 
-                // =============================================================
                 // Network Client update (Client Side)
-                // =============================================================
                 if let Some(ref mut client) = net_client {
                     client.update();
 
-                    // Send local input (Right Player / Player 2)
                     let my_input = input::read_player1_input(true);
                     client.send_input(my_input);
 
-                    // Receive authoritative game state from host
                     if let Some(ref net_state) = client.latest_state {
                         physics.ball.pos = Vec2::new(net_state.ball_pos.0, net_state.ball_pos.1);
                         physics.ball.vel = Vec2::new(net_state.ball_vel.0, net_state.ball_vel.1);
@@ -353,20 +595,16 @@ async fn main() {
                         }
                     }
 
-                    // Process chat
                     for (sender, text) in client.new_chat_messages.drain(..) {
                         chat_log.push((sender, text, global_time));
                         audio.play_score();
                     }
 
                     if !client.is_connected {
-                        // Host disconnected
                         state = AppState::MainMenu;
                     }
                 }
-                // =============================================================
                 // Host / Local authoritative simulation
-                // =============================================================
                 else {
                     let (p1_input, p2_input) = if let Some(ref mut host) = net_host {
                         host.update();
@@ -392,7 +630,6 @@ async fn main() {
                         (p1, p2)
                     };
 
-                    // Fixed-timestep simulation loop (75 Hz)
                     physics_accumulator += frame_dt;
                     while physics_accumulator >= PHYSICS_DT {
                         physics_accumulator -= PHYSICS_DT;
@@ -407,12 +644,10 @@ async fn main() {
 
                         let events = physics.take_events();
 
-                        // Send authoritative state to network client if hosting
                         if let Some(ref mut host) = net_host {
                             host.send_game_state(&physics, &logic, &events);
                         }
 
-                        // Process collision events
                         for event in events {
                             match event {
                                 MatchEvent::BallHitBlob { player, intensity } => {
@@ -450,7 +685,6 @@ async fn main() {
                             }
                         }
 
-                        // Check for round reset / serve
                         if logic.can_start_round(&physics) {
                             if let Some(winner) = logic.winning_player {
                                 state = AppState::Victory(winner);
@@ -468,7 +702,6 @@ async fn main() {
                     }
                 }
 
-                // Update visual effects & net dynamics
                 net_renderer.update(frame_dt);
                 vfx.update(frame_dt);
                 ball_trail.update(physics.ball.pos, physics.ball.vel.length());
@@ -486,9 +719,8 @@ async fn main() {
                 }
                 if is_key_pressed(KeyCode::Space) || is_key_pressed(KeyCode::Enter) {
                     match pause_selected {
-                        0 => state = AppState::Playing, // Resume
+                        0 => state = AppState::Playing,
                         1 => {
-                            // Restart match
                             logic.reset_match();
                             physics.reset_players();
                             physics.reset_ball(Some(PlayerSide::Left));
@@ -521,19 +753,10 @@ async fn main() {
         // =====================================================================
         clear_background(Color::new(0.05, 0.05, 0.08, 1.0));
 
-        let screen_w = screen_width();
-        let screen_h = screen_height();
-        let aspect = screen_w / screen_h;
-        let (cam_w, cam_h) = if aspect >= VIRTUAL_WIDTH / VIRTUAL_HEIGHT {
-            (VIRTUAL_HEIGHT * aspect, VIRTUAL_HEIGHT)
-        } else {
-            (VIRTUAL_WIDTH, VIRTUAL_WIDTH / aspect)
-        };
-
         let shake = vfx.get_shake_offset();
         let cam_target = Vec2::new(VIRTUAL_WIDTH * 0.5, VIRTUAL_HEIGHT * 0.5) + shake;
 
-        // World camera
+        // 1. World Camera for Arena, Blobs, Ball & Particles
         set_camera(&Camera2D {
             target: cam_target,
             zoom: Vec2::new(2.0 / cam_w, 2.0 / cam_h),
@@ -580,15 +803,24 @@ async fn main() {
             AppState::MainMenu => {
                 render_main_menu(
                     game_mode,
+                    &player1_name,
                     difficulty,
                     rule_mode,
                     score_to_win,
                     arena,
                     left_theme,
                     right_theme,
+                    fullscreen,
                     menu_selected,
+                    Some(virt_mouse),
                     global_time,
                 );
+            }
+            AppState::PlayerSetup { is_two_player, active_field } => {
+                render_player_setup(&player1_name, &player2_name, is_two_player, active_field, global_time);
+            }
+            AppState::ServerBrowser { selected_idx, ref servers, is_refreshing } => {
+                render_server_browser(servers, selected_idx, is_refreshing, global_time);
             }
             AppState::HostLobby => {
                 let is_connected = net_host.as_ref().map_or(false, |h| h.is_client_connected);
@@ -601,47 +833,61 @@ async fn main() {
             }
             AppState::Playing => {
                 let left_title = if net_host.is_some() {
-                    "HOST (P1)"
+                    format!("{} (Host)", player1_name)
                 } else if net_client.is_some() {
-                    "HOST (P1)"
+                    "Host (P1)".to_string()
                 } else {
                     match game_mode {
-                        GameMode::BotVsBot => "CPU 1",
-                        _ => "PLAYER 1",
+                        GameMode::BotVsBot => "CPU 1".to_string(),
+                        _ => player1_name.clone(),
                     }
                 };
 
                 let right_title = if net_host.is_some() {
-                    "CLIENT (P2)".to_string()
+                    "Client (P2)".to_string()
                 } else if net_client.is_some() {
-                    "YOU (P2)".to_string()
+                    format!("{} (You)", player1_name)
                 } else {
                     match game_mode {
                         GameMode::SinglePlayer => format!("CPU ({})", difficulty.name()),
-                        GameMode::TwoPlayerLocal => "PLAYER 2".to_string(),
+                        GameMode::TwoPlayerLocal => player2_name.clone(),
                         GameMode::BotVsBot => format!("CPU 2 ({})", difficulty.name()),
-                        _ => "PLAYER 2".to_string(),
+                        _ => player2_name.clone(),
                     }
                 };
 
                 render_hud(
                     &logic,
-                    left_title,
+                    &left_title,
                     &right_title,
                     left_theme,
                     right_theme,
                     global_time,
                 );
 
-                // Render in-game chat overlay
                 render_chat_overlay(&chat_log, is_typing_chat, &chat_input, global_time);
             }
             AppState::Paused => {
-                render_hud(&logic, "PLAYER 1", "PLAYER 2", left_theme, right_theme, global_time);
+                let r_name = if game_mode == GameMode::SinglePlayer {
+                    format!("CPU ({})", difficulty.name())
+                } else {
+                    player2_name.clone()
+                };
+                render_hud(&logic, &player1_name, &r_name, left_theme, right_theme, global_time);
                 render_pause_menu(pause_selected);
             }
             AppState::Victory(winner) => {
-                render_victory_screen(winner, &logic, global_time);
+                let winner_name = match winner {
+                    PlayerSide::Left => &player1_name,
+                    PlayerSide::Right => {
+                        if game_mode == GameMode::SinglePlayer {
+                            "Computer"
+                        } else {
+                            &player2_name
+                        }
+                    }
+                };
+                render_victory_screen(winner, winner_name, &logic, global_time);
             }
         }
 

@@ -1,0 +1,95 @@
+name: Cross-Platform Release Builds
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+
+jobs:
+  build-linux:
+    name: Build Linux Packages
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Install Rust Toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install Linux Dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libasound2-dev libx11-dev libxi-dev libgl1-mesa-dev
+
+      - name: Build Release Binary
+        run: cargo build --release --locked
+
+      - name: Package Linux Artifacts
+        run: ./packaging/build_packages.sh
+
+      - name: Upload Linux Release Assets
+        if: github.event_name == 'release'
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release upload ${{ github.event.release.tag_name }} dist/* --clobber
+
+  build-windows:
+    name: Build Windows Portable Bundle
+    runs-on: windows-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Install Rust Toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Build Release Binary
+        run: cargo build --release --locked
+
+      - name: Package Windows Bundle
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path "dist-win/blobby-volley-3-windows-x64"
+          Copy-Item "target/release/blobby.exe" -Destination "dist-win/blobby-volley-3-windows-x64/"
+          Copy-Item "README.md" -Destination "dist-win/blobby-volley-3-windows-x64/"
+          Copy-Item "COPYING" -Destination "dist-win/blobby-volley-3-windows-x64/LICENSE.txt"
+          Compress-Archive -Path "dist-win/blobby-volley-3-windows-x64/*" -DestinationPath "dist-win/blobby-volley-3-v3.0.0-windows-x64.zip"
+
+      - name: Upload Windows Release Asset
+        if: github.event_name == 'release'
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release upload ${{ github.event.release.tag_name }} dist-win/blobby-volley-3-v3.0.0-windows-x64.zip --clobber
+
+  build-macos:
+    name: Build macOS Universal Bundle
+    runs-on: macos-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Install Rust Toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-apple-darwin,aarch64-apple-darwin
+
+      - name: Build Intel and Apple Silicon Targets
+        run: |
+          cargo build --release --target x86_64-apple-darwin --locked
+          cargo build --release --target aarch64-apple-darwin --locked
+
+      - name: Create Universal Binary
+        run: |
+          mkdir -p dist-mac
+          lipo -create -output dist-mac/blobby target/x86_64-apple-darwin/release/blobby target/aarch64-apple-darwin/release/blobby
+          chmod +x dist-mac/blobby
+          tar -czf dist-mac/blobby-volley-3-v3.0.0-macos-universal.tar.gz -C dist-mac blobby
+
+      - name: Upload macOS Release Asset
+        if: github.event_name == 'release'
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release upload ${{ github.event.release.tag_name }} dist-mac/blobby-volley-3-v3.0.0-macos-universal.tar.gz --clobber

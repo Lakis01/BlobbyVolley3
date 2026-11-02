@@ -4,13 +4,39 @@ use crate::constants::*;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RuleMode {
-    /// Classic Blobby Volley 1 & 2 side-out rules:
-    /// Points are only scored when serving! If the receiver wins the rally,
-    /// they win the serve without scoring a point.
     Classic,
-    /// Modern Rally Point scoring:
-    /// Every mistake awards 1 point to the opponent, who also gets the next serve.
     Modern,
+}
+
+impl RuleMode {
+    pub fn name(self) -> &'static str {
+        match self {
+            RuleMode::Modern => "Modern (Rally Points)",
+            RuleMode::Classic => "Classic (Side-Out)",
+        }
+    }
+
+    pub fn next(self) -> Self {
+        match self {
+            RuleMode::Modern => RuleMode::Classic,
+            RuleMode::Classic => RuleMode::Modern,
+        }
+    }
+
+    pub fn prev(self) -> Self {
+        self.next()
+    }
+
+    pub fn from_index(idx: usize) -> Self {
+        if idx == 1 { RuleMode::Classic } else { RuleMode::Modern }
+    }
+
+    pub fn to_index(self) -> usize {
+        match self {
+            RuleMode::Modern => 0,
+            RuleMode::Classic => 1,
+        }
+    }
 }
 
 #[derive(Debug, Clone)]

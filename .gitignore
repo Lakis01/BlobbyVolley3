@@ -1,2 +1,8 @@
 /target/
-
+/dist/
+/dist-win/
+/dist-mac/
+*.tar.gz
+*.deb
+*.zip
+.DS_Store

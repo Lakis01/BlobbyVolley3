@@ -303,3 +303,89 @@ pub fn get_local_ip() -> String {
     }
     "127.0.0.1".to_string()
 }
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ServerEntry {
+    pub name: String,
+    pub host: String,
+    pub port: u16,
+    pub server_type: String,
+    pub ping_ms: Option<u32>,
+}
+
+/// Parses server entries from Blobby Volley 2 XML response
+pub fn parse_server_xml(xml: &str) -> Vec<ServerEntry> {
+    let mut list = Vec::new();
+    let mut current_host = String::new();
+    for line in xml.lines() {
+        let trimmed = line.trim();
+        if trimmed.contains("host=\"") {
+            if let Some(start) = trimmed.find("host=\"") {
+                let rest = &trimmed[start + 6..];
+                if let Some(end) = rest.find('"') {
+                    current_host = rest[..end].to_string();
+                }
+            }
+        } else if trimmed.contains("port=\"") && !current_host.is_empty() {
+            if let Some(start) = trimmed.find("port=\"") {
+                let rest = &trimmed[start + 6..];
+                if let Some(end) = rest.find('"') {
+                    if let Ok(port) = rest[..end].parse::<u16>() {
+                        let is_official = current_host.contains("blobbyvolley.de");
+                        let s_name = if is_official {
+                            format!("Official Dedicated ({})", current_host)
+                        } else {
+                            format!("Community Dedicated ({})", current_host)
+                        };
+                        list.push(ServerEntry {
+                            name: s_name,
+                            host: current_host.clone(),
+                            port,
+                            server_type: "Dedicated Server".to_string(),
+                            ping_ms: None,
+                        });
+                    }
+                }
+            }
+            current_host.clear();
+        }
+    }
+    list
+}
+
+/// Queries the official Blobby Volley master server (http://blobbyvolley.de/server.php)
+pub fn query_master_server() -> Vec<ServerEntry> {
+    use std::io::Read;
+    use std::time::Duration;
+    use std::net::ToSocketAddrs;
+
+    let mut list = Vec::new();
+
+    // Query official legacy master list with strict connect & read timeouts (600ms max)
+    if let Ok(mut addrs) = ("blobbyvolley.de", 80).to_socket_addrs() {
+        if let Some(addr) = addrs.next() {
+            if let Ok(mut stream) = TcpStream::connect_timeout(&addr, Duration::from_millis(600)) {
+                let _ = stream.set_read_timeout(Some(Duration::from_millis(600)));
+                let _ = stream.set_write_timeout(Some(Duration::from_millis(600)));
+                let req = "GET /server.php HTTP/1.1\r\nHost: blobbyvolley.de\r\nConnection: close\r\n\r\n";
+                if stream.write_all(req.as_bytes()).is_ok() {
+                    let mut response = String::new();
+                    if stream.read_to_string(&mut response).is_ok() {
+                        list.extend(parse_server_xml(&response));
+                    }
+                }
+            }
+        }
+    }
+
+    // Always include local LAN / Loopback option for instant testing & matchmaking
+    list.push(ServerEntry {
+        name: "Localhost Remastered Room".to_string(),
+        host: "127.0.0.1".to_string(),
+        port: DEFAULT_PORT,
+        server_type: "LAN / P2P Room".to_string(),
+        ping_ms: Some(1),
+    });
+
+    list
+}

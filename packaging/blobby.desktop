@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=Blobby Volley 3 (Remastered)
+GenericName=Arcade Volleyball Game
+Comment=Blobby Volley 3 - Remastered 2026 Edition in Rust
+Exec=blobby
+Icon=blobby
+Terminal=false
+Categories=Game;ArcadeGame;SportsGame;
+Keywords=blobby;volleyball;arcade;multiplayer;

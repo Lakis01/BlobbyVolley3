@@ -1,4 +1,4 @@
-// Blobby Volley 3 - 2026 Remastered Glassmorphism HUD, Menus, Online Lobby & Chat UI
+// Blobby Volley 3 - 2026 Remastered Glassmorphism HUD, Menus, Profile Setup, Online Lobby & Chat UI
 use macroquad::prelude::*;
 use crate::physics::PlayerSide;
 use crate::rules::{GameLogic, RuleMode};
@@ -6,6 +6,7 @@ use crate::render::blob::BlobTheme;
 use crate::ai::AiDifficulty;
 use crate::render::arenas::ArenaType;
 use crate::constants::*;
+use crate::net::ServerEntry;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum GameMode {
@@ -14,6 +15,7 @@ pub enum GameMode {
     BotVsBot,
     HostOnline,
     JoinOnline,
+    ServerBrowser,
 }
 
 impl GameMode {
@@ -23,7 +25,8 @@ impl GameMode {
             GameMode::TwoPlayerLocal => "2 Players (Local)",
             GameMode::BotVsBot => "CPU vs CPU",
             GameMode::HostOnline => "Host Online Match",
-            GameMode::JoinOnline => "Join Online Match",
+            GameMode::JoinOnline => "Direct Connect (IP)",
+            GameMode::ServerBrowser => "Public Server Browser",
         }
     }
 
@@ -33,9 +36,64 @@ impl GameMode {
             GameMode::TwoPlayerLocal => GameMode::BotVsBot,
             GameMode::BotVsBot => GameMode::HostOnline,
             GameMode::HostOnline => GameMode::JoinOnline,
-            GameMode::JoinOnline => GameMode::SinglePlayer,
+            GameMode::JoinOnline => GameMode::ServerBrowser,
+            GameMode::ServerBrowser => GameMode::SinglePlayer,
         }
     }
+
+    pub fn prev(self) -> Self {
+        match self {
+            GameMode::SinglePlayer => GameMode::ServerBrowser,
+            GameMode::TwoPlayerLocal => GameMode::SinglePlayer,
+            GameMode::BotVsBot => GameMode::TwoPlayerLocal,
+            GameMode::HostOnline => GameMode::BotVsBot,
+            GameMode::JoinOnline => GameMode::HostOnline,
+            GameMode::ServerBrowser => GameMode::JoinOnline,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct MenuRowLayout {
+    pub index: usize,
+    pub row_rect: Rect,
+    pub left_arrow_rect: Option<Rect>,
+    pub right_arrow_rect: Option<Rect>,
+}
+
+pub fn get_main_menu_layout() -> Vec<MenuRowLayout> {
+    let card_w = 660.0;
+    let card_x = (VIRTUAL_WIDTH - card_w) * 0.5;
+    let card_y = 120.0;
+    let start_y = card_y + 36.0;
+    let row_h = 37.0;
+
+    let mut rows = Vec::new();
+    for i in 0..10 {
+        let y = start_y + i as f32 * row_h;
+        let row_rect = Rect::new(card_x + 14.0, y - 18.0, card_w - 28.0, 32.0);
+
+        if i == 0 {
+            // Action button (START MATCH) - no arrows
+            rows.push(MenuRowLayout {
+                index: i,
+                row_rect,
+                left_arrow_rect: None,
+                right_arrow_rect: None,
+            });
+        } else {
+            // Settings row with distinct left and right arrow buttons
+            let left_btn = Rect::new(card_x + card_w - 275.0, y - 16.0, 26.0, 26.0);
+            let right_btn = Rect::new(card_x + card_w - 40.0, y - 16.0, 26.0, 26.0);
+            rows.push(MenuRowLayout {
+                index: i,
+                row_rect,
+                left_arrow_rect: Some(left_btn),
+                right_arrow_rect: Some(right_btn),
+            });
+        }
+    }
+    rows
 }
 
 pub fn render_hud(
@@ -46,13 +104,13 @@ pub fn render_hud(
     right_theme: BlobTheme,
     time: f32,
 ) {
-    let board_w = 460.0;
+    let board_w = 480.0;
     let board_h = 74.0;
     let board_x = (VIRTUAL_WIDTH - board_w) * 0.5;
     let board_y = 16.0;
 
     // Glassmorphism card backdrop
-    draw_rectangle(board_x, board_y, board_w, board_h, Color::new(0.08, 0.1, 0.16, 0.82));
+    draw_rectangle(board_x, board_y, board_w, board_h, Color::new(0.08, 0.1, 0.16, 0.85));
     draw_rectangle_lines(board_x, board_y, board_w, board_h, 1.5, Color::new(0.4, 0.6, 0.9, 0.45));
 
     // Glow accent line on top of card
@@ -99,12 +157,12 @@ pub fn render_hud(
         Color::new(1.0, 0.95, 0.4, 1.0),
     );
 
-    // Subtitle info: First to N points & Rule Mode
+    // Subtitle info: First to N points & Rule Mode (using clean ASCII hyphen)
     let mode_str = match logic.rule_mode {
         RuleMode::Modern => "RALLY POINTS",
         RuleMode::Classic => "CLASSIC SIDE-OUT",
     };
-    let sub_str = format!("FIRST TO {}  •  {}", logic.score_to_win, mode_str);
+    let sub_str = format!("FIRST TO {}  -  {}", logic.score_to_win, mode_str);
     let sub_dim = measure_text(&sub_str, None, 13, 1.0);
     draw_text(
         &sub_str,
@@ -130,113 +188,298 @@ pub fn render_hud(
 
 pub fn render_main_menu(
     game_mode: GameMode,
+    player1_name: &str,
     difficulty: AiDifficulty,
     rule_mode: RuleMode,
     score_to_win: i32,
     arena: ArenaType,
     left_theme: BlobTheme,
     right_theme: BlobTheme,
+    fullscreen: bool,
     selected_item: usize,
+    virt_mouse: Option<Vec2>,
     time: f32,
 ) {
     // Backdrop dimming
-    draw_rectangle(0.0, 0.0, VIRTUAL_WIDTH, VIRTUAL_HEIGHT, Color::new(0.04, 0.05, 0.1, 0.7));
+    draw_rectangle(0.0, 0.0, VIRTUAL_WIDTH, VIRTUAL_HEIGHT, Color::new(0.04, 0.05, 0.1, 0.72));
 
     // Glowing 2026 Title
     let title = "BLOBBY VOLLEY 3";
-    let title_dim = measure_text(title, None, 56, 1.0);
+    let title_dim = measure_text(title, None, 50, 1.0);
     let tx = (VIRTUAL_WIDTH - title_dim.width) * 0.5;
-    let ty = 120.0;
+    let ty = 66.0;
 
     // Title shadow and glow
-    draw_text(title, tx + 2.0, ty + 3.0, 56.0, Color::new(0.0, 0.0, 0.0, 0.5));
-    draw_text(title, tx, ty, 56.0, Color::new(0.15, 0.85, 1.0, 1.0));
+    draw_text(title, tx + 2.0, ty + 2.0, 50.0, Color::new(0.0, 0.0, 0.0, 0.6));
+    draw_text(title, tx, ty, 50.0, Color::new(0.15, 0.85, 1.0, 1.0));
 
-    let subtitle = "REMASTERED • 2026 EDITION";
-    let sub_dim = measure_text(subtitle, None, 18, 1.0);
+    let subtitle = "REMASTERED - 2026 EDITION";
+    let sub_dim = measure_text(subtitle, None, 16, 1.0);
     draw_text(
         subtitle,
         (VIRTUAL_WIDTH - sub_dim.width) * 0.5,
-        ty + 28.0,
-        18.0,
+        ty + 22.0,
+        16.0,
         Color::new(1.0, 0.85, 0.3, 0.9),
     );
 
     // Menu Card
-    let card_w = 560.0;
-    let card_h = 360.0;
+    let card_w = 660.0;
+    let card_h = 425.0;
     let card_x = (VIRTUAL_WIDTH - card_w) * 0.5;
-    let card_y = 175.0;
+    let card_y = 120.0;
 
-    draw_rectangle(card_x, card_y, card_w, card_h, Color::new(0.08, 0.1, 0.18, 0.88));
+    draw_rectangle(card_x, card_y, card_w, card_h, Color::new(0.08, 0.1, 0.18, 0.92));
     draw_rectangle_lines(card_x, card_y, card_w, card_h, 1.5, Color::new(0.3, 0.5, 0.85, 0.5));
 
-    // Menu Items
-    let items = [
-        format!("START MATCH  [ Press Space / Enter ]"),
-        format!("Game Mode:       <  {}  >", game_mode.name()),
-        format!("AI Difficulty:   <  {}  >", difficulty.name()),
-        format!("Rules:           <  {}  >", match rule_mode {
-            RuleMode::Modern => "Modern (Rally Points)",
-            RuleMode::Classic => "Classic (Side-Out)",
-        }),
-        format!("Points to Win:   <  {}  >", score_to_win),
-        format!("Arena:           <  {}  >", arena.name()),
-        format!("P1 Color:        <  {}  >", left_theme.name()),
-        format!("P2 Color:        <  {}  >", right_theme.name()),
+    let layouts = get_main_menu_layout();
+
+    // Data for each row: (Label, Value)
+    let rows_data: [(Option<&'static str>, String); 10] = [
+        (None, "START MATCH  [ Press Space / Enter ]".to_string()),
+        (Some("Game Mode:"), game_mode.name().to_string()),
+        (Some("Player Profile:"), player1_name.to_string()),
+        (Some("AI Difficulty:"), difficulty.name().to_string()),
+        (Some("Rules:"), rule_mode.name().to_string()),
+        (Some("Points to Win:"), format!("{}", score_to_win)),
+        (Some("Arena:"), arena.name().to_string()),
+        (Some("P1 Color:"), left_theme.name().to_string()),
+        (Some("P2 Color:"), right_theme.name().to_string()),
+        (Some("Fullscreen:"), if fullscreen { "ENABLED".to_string() } else { "DISABLED".to_string() }),
     ];
 
-    let start_y = card_y + 42.0;
-    let row_h = 38.0;
-
-    for (i, text) in items.iter().enumerate() {
+    for layout in &layouts {
+        let i = layout.index;
         let is_selected = i == selected_item;
-        let y = start_y + i as f32 * row_h;
+        let (label_opt, ref val) = rows_data[i];
 
+        // Draw row highlight if selected
         if is_selected {
-            let pulse = (time * 5.0).sin().abs() * 0.2 + 0.8;
+            let pulse = (time * 5.0).sin().abs() * 0.15 + 0.85;
             draw_rectangle(
-                card_x + 16.0,
-                y - 24.0,
-                card_w - 32.0,
-                32.0,
-                Color::new(0.15, 0.45, 0.85, 0.4 * pulse),
+                layout.row_rect.x,
+                layout.row_rect.y,
+                layout.row_rect.w,
+                layout.row_rect.h,
+                Color::new(0.15, 0.45, 0.85, 0.35 * pulse),
             );
             draw_rectangle_lines(
-                card_x + 16.0,
-                y - 24.0,
-                card_w - 32.0,
-                32.0,
+                layout.row_rect.x,
+                layout.row_rect.y,
+                layout.row_rect.w,
+                layout.row_rect.h,
                 1.5,
                 Color::new(0.2, 0.85, 1.0, 0.85),
             );
         }
 
-        let col = if i == 0 {
-            if is_selected {
+        let text_y = layout.row_rect.y + 22.0;
+
+        if let Some(label) = label_opt {
+            // Setting Row: Label on left
+            let label_col = if is_selected { WHITE } else { Color::new(0.8, 0.85, 0.92, 0.85) };
+            draw_text(label, card_x + 30.0, text_y, 19.0, label_col);
+
+            // Left arrow button `<`
+            if let Some(l_rect) = layout.left_arrow_rect {
+                let is_hovered = virt_mouse.map_or(false, |m| l_rect.contains(m));
+                let bg_col = if is_hovered {
+                    Color::new(0.2, 0.7, 1.0, 0.6)
+                } else {
+                    Color::new(0.12, 0.2, 0.32, 0.7)
+                };
+                let border_col = if is_hovered {
+                    Color::new(0.4, 0.95, 1.0, 1.0)
+                } else {
+                    Color::new(0.3, 0.6, 0.9, 0.6)
+                };
+
+                draw_rectangle(l_rect.x, l_rect.y, l_rect.w, l_rect.h, bg_col);
+                draw_rectangle_lines(l_rect.x, l_rect.y, l_rect.w, l_rect.h, 1.0, border_col);
+                draw_text("<", l_rect.x + 8.0, l_rect.y + 19.0, 20.0, if is_hovered { WHITE } else { Color::new(0.3, 0.9, 1.0, 0.9) });
+            }
+
+            // Right arrow button `>`
+            if let Some(r_rect) = layout.right_arrow_rect {
+                let is_hovered = virt_mouse.map_or(false, |m| r_rect.contains(m));
+                let bg_col = if is_hovered {
+                    Color::new(0.2, 0.7, 1.0, 0.6)
+                } else {
+                    Color::new(0.12, 0.2, 0.32, 0.7)
+                };
+                let border_col = if is_hovered {
+                    Color::new(0.4, 0.95, 1.0, 1.0)
+                } else {
+                    Color::new(0.3, 0.6, 0.9, 0.6)
+                };
+
+                draw_rectangle(r_rect.x, r_rect.y, r_rect.w, r_rect.h, bg_col);
+                draw_rectangle_lines(r_rect.x, r_rect.y, r_rect.w, r_rect.h, 1.0, border_col);
+                draw_text(">", r_rect.x + 8.0, r_rect.y + 19.0, 20.0, if is_hovered { WHITE } else { Color::new(0.3, 0.9, 1.0, 0.9) });
+            }
+
+            // Value text centered between the two arrow buttons
+            if let (Some(l_rect), Some(r_rect)) = (layout.left_arrow_rect, layout.right_arrow_rect) {
+                let val_dim = measure_text(val, None, 18, 1.0);
+                let center_x = (l_rect.x + l_rect.w + r_rect.x) * 0.5;
+                let val_x = center_x - val_dim.width * 0.5;
+                let val_col = if is_selected {
+                    Color::new(1.0, 0.95, 0.4, 1.0)
+                } else {
+                    Color::new(0.85, 0.9, 1.0, 0.9)
+                };
+                draw_text(val, val_x, text_y, 18.0, val_col);
+            }
+        } else {
+            // Action button (START MATCH)
+            let col = if is_selected {
                 Color::new(1.0, 0.95, 0.3, 1.0)
             } else {
                 Color::new(0.3, 0.9, 1.0, 1.0)
-            }
-        } else if is_selected {
-            WHITE
-        } else {
-            Color::new(0.8, 0.85, 0.92, 0.85)
-        };
-
-        draw_text(text, card_x + 36.0, y - 2.0, 20.0, col);
+            };
+            let dim = measure_text(val, None, 21, 1.0);
+            let tx = (VIRTUAL_WIDTH - dim.width) * 0.5;
+            draw_text(val, tx, text_y, 21.0, col);
+        }
     }
 
     // Footer Controls Guide
-    let guide = "Controls: P1 [W/A/D or Gamepad] | P2 [Arrow Keys] | Online Chat [T] | Options [Left/Right]";
-    let guide_dim = measure_text(guide, None, 14, 1.0);
+    let guide = "Controls: [Left/Right] or Click [< / >] to cycle | [Enter/Click Row] to Confirm & Start | [F11] Fullscreen";
+    let guide_dim = measure_text(guide, None, 13, 1.0);
     draw_text(
         guide,
         (VIRTUAL_WIDTH - guide_dim.width) * 0.5,
-        VIRTUAL_HEIGHT - 24.0,
-        14.0,
-        Color::new(0.7, 0.75, 0.85, 0.75),
+        VIRTUAL_HEIGHT - 18.0,
+        13.0,
+        Color::new(0.7, 0.75, 0.85, 0.8),
     );
+}
+
+pub fn render_player_setup(
+    p1_name: &str,
+    p2_name: &str,
+    is_two_player: bool,
+    active_field: usize,
+    time: f32,
+) {
+    draw_rectangle(0.0, 0.0, VIRTUAL_WIDTH, VIRTUAL_HEIGHT, Color::new(0.04, 0.05, 0.1, 0.85));
+
+    let card_w = 560.0;
+    let card_h = if is_two_player { 340.0 } else { 290.0 };
+    let card_x = (VIRTUAL_WIDTH - card_w) * 0.5;
+    let card_y = (VIRTUAL_HEIGHT - card_h) * 0.5;
+
+    draw_rectangle(card_x, card_y, card_w, card_h, Color::new(0.08, 0.1, 0.18, 0.95));
+    draw_rectangle_lines(card_x, card_y, card_w, card_h, 2.0, Color::new(0.2, 0.85, 1.0, 0.8));
+
+    let title = "PLAYER PROFILE & IDENTITY";
+    let title_dim = measure_text(title, None, 30, 1.0);
+    draw_text(title, (VIRTUAL_WIDTH - title_dim.width) * 0.5, card_y + 44.0, 30.0, Color::new(0.3, 0.9, 1.0, 1.0));
+
+    let sub = "Display names are saved across sessions for local and online play";
+    let sub_dim = measure_text(sub, None, 14, 1.0);
+    draw_text(sub, (VIRTUAL_WIDTH - sub_dim.width) * 0.5, card_y + 70.0, 14.0, Color::new(0.75, 0.8, 0.9, 0.8));
+
+    let cursor = if (time * 3.5) as i32 % 2 == 0 { "_" } else { "" };
+
+    // Field 0: Player 1 Name
+    let f0_y = card_y + 115.0;
+    draw_text("Player 1 Name:", card_x + 40.0, f0_y - 8.0, 18.0, WHITE);
+    let box0_rect = Rect::new(card_x + 40.0, f0_y, card_w - 80.0, 38.0);
+    draw_rectangle(box0_rect.x, box0_rect.y, box0_rect.w, box0_rect.h, Color::new(0.05, 0.08, 0.14, 0.95));
+    let f0_border = if active_field == 0 { Color::new(0.2, 0.9, 1.0, 1.0) } else { Color::new(0.3, 0.45, 0.65, 0.6) };
+    draw_rectangle_lines(box0_rect.x, box0_rect.y, box0_rect.w, box0_rect.h, 1.5, f0_border);
+    let f0_text = if active_field == 0 { format!("{}{}", p1_name, cursor) } else { p1_name.to_string() };
+    draw_text(&f0_text, box0_rect.x + 12.0, box0_rect.y + 26.0, 20.0, Color::new(1.0, 0.95, 0.35, 1.0));
+
+    // Field 1: Player 2 Name (only if 2-player mode)
+    if is_two_player {
+        let f1_y = card_y + 190.0;
+        draw_text("Player 2 Name:", card_x + 40.0, f1_y - 8.0, 18.0, WHITE);
+        let box1_rect = Rect::new(card_x + 40.0, f1_y, card_w - 80.0, 38.0);
+        draw_rectangle(box1_rect.x, box1_rect.y, box1_rect.w, box1_rect.h, Color::new(0.05, 0.08, 0.14, 0.95));
+        let f1_border = if active_field == 1 { Color::new(0.2, 0.9, 1.0, 1.0) } else { Color::new(0.3, 0.45, 0.65, 0.6) };
+        draw_rectangle_lines(box1_rect.x, box1_rect.y, box1_rect.w, box1_rect.h, 1.5, f1_border);
+        let f1_text = if active_field == 1 { format!("{}{}", p2_name, cursor) } else { p2_name.to_string() };
+        draw_text(&f1_text, box1_rect.x + 12.0, box1_rect.y + 26.0, 20.0, Color::new(1.0, 0.95, 0.35, 1.0));
+    }
+
+    // Confirm Prompt
+    let btn_y = card_y + card_h - 40.0;
+    let hint = "Press Enter / Tab to Confirm & Proceed | Esc to Cancel";
+    let hint_dim = measure_text(hint, None, 15, 1.0);
+    draw_text(hint, (VIRTUAL_WIDTH - hint_dim.width) * 0.5, btn_y, 15.0, Color::new(0.3, 0.95, 1.0, 0.9));
+}
+
+pub fn render_server_browser(
+    servers: &[ServerEntry],
+    selected_idx: usize,
+    is_refreshing: bool,
+    time: f32,
+) {
+    draw_rectangle(0.0, 0.0, VIRTUAL_WIDTH, VIRTUAL_HEIGHT, Color::new(0.04, 0.05, 0.1, 0.88));
+
+    let card_w = 680.0;
+    let card_h = 440.0;
+    let card_x = (VIRTUAL_WIDTH - card_w) * 0.5;
+    let card_y = (VIRTUAL_HEIGHT - card_h) * 0.5;
+
+    draw_rectangle(card_x, card_y, card_w, card_h, Color::new(0.08, 0.1, 0.18, 0.95));
+    draw_rectangle_lines(card_x, card_y, card_w, card_h, 2.0, Color::new(0.2, 0.85, 1.0, 0.75));
+
+    let title = "PUBLIC DEDICATED SERVERS & MATCHMAKING";
+    let title_dim = measure_text(title, None, 28, 1.0);
+    draw_text(title, (VIRTUAL_WIDTH - title_dim.width) * 0.5, card_y + 42.0, 28.0, Color::new(0.3, 0.9, 1.0, 1.0));
+
+    let subtitle = "Official Blobby Volley 2 Network & Remastered Community Rooms";
+    let sub_dim = measure_text(subtitle, None, 14, 1.0);
+    draw_text(subtitle, (VIRTUAL_WIDTH - sub_dim.width) * 0.5, card_y + 66.0, 14.0, Color::new(0.8, 0.85, 0.95, 0.8));
+
+    // Table Header
+    let table_y = card_y + 100.0;
+    draw_rectangle(card_x + 20.0, table_y - 20.0, card_w - 40.0, 26.0, Color::new(0.12, 0.16, 0.26, 0.9));
+    draw_text("SERVER NAME", card_x + 35.0, table_y - 2.0, 15.0, Color::new(0.4, 0.9, 1.0, 1.0));
+    draw_text("ENDPOINT", card_x + 360.0, table_y - 2.0, 15.0, Color::new(0.4, 0.9, 1.0, 1.0));
+    draw_text("STATUS / TYPE", card_x + 530.0, table_y - 2.0, 15.0, Color::new(0.4, 0.9, 1.0, 1.0));
+
+    let row_h = 34.0;
+    let list_start_y = table_y + 18.0;
+
+    if servers.is_empty() {
+        let msg = if is_refreshing { "Refreshing master server list..." } else { "No servers found. Press R to refresh." };
+        let msg_dim = measure_text(msg, None, 18, 1.0);
+        draw_text(msg, (VIRTUAL_WIDTH - msg_dim.width) * 0.5, list_start_y + 60.0, 18.0, Color::new(1.0, 0.85, 0.3, 1.0));
+    } else {
+        for (i, server) in servers.iter().enumerate().take(7) {
+            let y = list_start_y + i as f32 * row_h;
+            let is_sel = i == selected_idx;
+
+            if is_sel {
+                let pulse = (time * 5.0).sin().abs() * 0.15 + 0.85;
+                draw_rectangle(card_x + 20.0, y - 16.0, card_w - 40.0, 30.0, Color::new(0.18, 0.45, 0.85, 0.4 * pulse));
+                draw_rectangle_lines(card_x + 20.0, y - 16.0, card_w - 40.0, 30.0, 1.5, Color::new(0.2, 0.85, 1.0, 0.9));
+            }
+
+            let col = if is_sel { Color::new(1.0, 0.95, 0.4, 1.0) } else { WHITE };
+            draw_text(&server.name, card_x + 35.0, y + 5.0, 16.0, col);
+
+            let endpoint = format!("{}:{}", server.host, server.port);
+            draw_text(&endpoint, card_x + 360.0, y + 5.0, 15.0, Color::new(0.85, 0.9, 1.0, 0.85));
+
+            let status = server.ping_ms.map_or_else(|| server.server_type.clone(), |p| format!("{} ({}ms)", server.server_type, p));
+            draw_text(&status, card_x + 530.0, y + 5.0, 14.0, Color::new(0.3, 1.0, 0.5, 0.9));
+        }
+    }
+
+    // Notice about zero-cost matchmaking
+    let note = "Tip: Remastered uses zero-cost direct P2P/LAN rooms. Host a match from menu anytime!";
+    let note_dim = measure_text(note, None, 13, 1.0);
+    draw_text(note, (VIRTUAL_WIDTH - note_dim.width) * 0.5, card_y + card_h - 48.0, 13.0, Color::new(0.8, 0.85, 0.95, 0.7));
+
+    // Footer actions
+    let actions = "[Enter / Click] Connect | [R] Refresh | [Esc] Return to Menu";
+    let act_dim = measure_text(actions, None, 15, 1.0);
+    draw_text(actions, (VIRTUAL_WIDTH - act_dim.width) * 0.5, card_y + card_h - 20.0, 15.0, Color::new(0.3, 0.9, 1.0, 0.95));
 }
 
 pub fn render_host_lobby(port: u16, local_ip: &str, is_connected: bool, time: f32) {
@@ -286,11 +529,11 @@ pub fn render_join_screen(ip_input: &str, is_connecting: bool, error: Option<&st
     draw_rectangle(card_x, card_y, card_w, card_h, Color::new(0.08, 0.1, 0.18, 0.92));
     draw_rectangle_lines(card_x, card_y, card_w, card_h, 2.0, Color::new(0.2, 0.8, 1.0, 0.7));
 
-    let title = "JOIN ONLINE MATCH";
-    let title_dim = measure_text(title, None, 32, 1.0);
-    draw_text(title, (VIRTUAL_WIDTH - title_dim.width) * 0.5, card_y + 48.0, 32.0, Color::new(0.3, 0.9, 1.0, 1.0));
+    let title = "DIRECT CONNECT TO SERVER";
+    let title_dim = measure_text(title, None, 30, 1.0);
+    draw_text(title, (VIRTUAL_WIDTH - title_dim.width) * 0.5, card_y + 48.0, 30.0, Color::new(0.3, 0.9, 1.0, 1.0));
 
-    let label = "Enter Server Address (IP:Port):";
+    let label = "Enter Host Address (IP:Port):";
     draw_text(label, card_x + 40.0, card_y + 105.0, 20.0, WHITE);
 
     // Text Input Box
@@ -417,29 +660,26 @@ pub fn render_pause_menu(selected_item: usize) {
     }
 }
 
-pub fn render_victory_screen(winner: PlayerSide, logic: &GameLogic, time: f32) {
+pub fn render_victory_screen(_winner: PlayerSide, winner_name: &str, logic: &GameLogic, time: f32) {
     draw_rectangle(0.0, 0.0, VIRTUAL_WIDTH, VIRTUAL_HEIGHT, Color::new(0.0, 0.0, 0.0, 0.65));
 
-    let card_w = 480.0;
-    let card_h = 320.0;
+    let card_w = 520.0;
+    let card_h = 330.0;
     let card_x = (VIRTUAL_WIDTH - card_w) * 0.5;
     let card_y = (VIRTUAL_HEIGHT - card_h) * 0.5;
 
     draw_rectangle(card_x, card_y, card_w, card_h, Color::new(0.08, 0.1, 0.18, 0.92));
     draw_rectangle_lines(card_x, card_y, card_w, card_h, 2.0, Color::new(1.0, 0.85, 0.2, 0.8));
 
-    let winner_text = match winner {
-        PlayerSide::Left => "PLAYER 1 WINS!",
-        PlayerSide::Right => "PLAYER 2 WINS!",
-    };
+    let winner_text = format!("{} WINS!", winner_name.to_uppercase());
 
     let pulse = (time * 4.0).sin().abs() * 0.15 + 0.85;
-    let title_dim = measure_text(winner_text, None, 44, 1.0);
+    let title_dim = measure_text(&winner_text, None, 40, 1.0);
     draw_text(
-        winner_text,
+        &winner_text,
         (VIRTUAL_WIDTH - title_dim.width) * 0.5,
         card_y + 58.0,
-        44.0,
+        40.0,
         Color::new(1.0, 0.9 * pulse, 0.2, 1.0),
     );
 

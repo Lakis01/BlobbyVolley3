@@ -9,24 +9,60 @@ use crate::constants::*;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AiDifficulty {
     Novice,
-    Pro,
+    Amateur,
+    Regular,
     Master,
+    Pro,
 }
 
 impl AiDifficulty {
     pub fn name(self) -> &'static str {
         match self {
             AiDifficulty::Novice => "Novice",
-            AiDifficulty::Pro => "Pro (Reduced)",
-            AiDifficulty::Master => "Master (Combot 1.1)",
+            AiDifficulty::Amateur => "Amateur",
+            AiDifficulty::Regular => "Regular",
+            AiDifficulty::Master => "Master",
+            AiDifficulty::Pro => "Pro",
         }
     }
 
     pub fn next(self) -> Self {
         match self {
+            AiDifficulty::Novice => AiDifficulty::Amateur,
+            AiDifficulty::Amateur => AiDifficulty::Regular,
+            AiDifficulty::Regular => AiDifficulty::Master,
+            AiDifficulty::Master => AiDifficulty::Pro,
+            AiDifficulty::Pro => AiDifficulty::Novice,
+        }
+    }
+
+    pub fn prev(self) -> Self {
+        match self {
             AiDifficulty::Novice => AiDifficulty::Pro,
+            AiDifficulty::Amateur => AiDifficulty::Novice,
+            AiDifficulty::Regular => AiDifficulty::Amateur,
+            AiDifficulty::Master => AiDifficulty::Regular,
             AiDifficulty::Pro => AiDifficulty::Master,
-            AiDifficulty::Master => AiDifficulty::Novice,
+        }
+    }
+
+    pub fn from_index(idx: usize) -> Self {
+        match idx {
+            0 => AiDifficulty::Novice,
+            1 => AiDifficulty::Amateur,
+            2 => AiDifficulty::Regular,
+            3 => AiDifficulty::Master,
+            _ => AiDifficulty::Pro,
+        }
+    }
+
+    pub fn to_index(self) -> usize {
+        match self {
+            AiDifficulty::Novice => 0,
+            AiDifficulty::Amateur => 1,
+            AiDifficulty::Regular => 2,
+            AiDifficulty::Master => 3,
+            AiDifficulty::Pro => 4,
         }
     }
 }
@@ -132,11 +168,17 @@ impl BotController {
             AiDifficulty::Novice => {
                 self.decide_novice(my_pos, my_vel_y, ball_pos, ball_vel, i_am_serving, is_game_running, &mut input);
             }
-            AiDifficulty::Pro => {
-                self.decide_reduced(my_pos, ball_pos, ball_vel, touches, i_am_serving, is_game_running, &mut input);
+            AiDifficulty::Amateur => {
+                self.decide_amateur(my_pos, my_vel_y, ball_pos, ball_vel, touches, i_am_serving, is_game_running, &mut input);
+            }
+            AiDifficulty::Regular => {
+                self.decide_combot_11(my_pos, ball_pos, ball_vel, touches, i_am_serving, is_game_running, &mut input);
             }
             AiDifficulty::Master => {
-                self.decide_combot_11(my_pos, ball_pos, ball_vel, touches, i_am_serving, is_game_running, &mut input);
+                self.decide_advanced(my_pos, my_vel_y, ball_pos, ball_vel, touches, i_am_serving, is_game_running, &mut input);
+            }
+            AiDifficulty::Pro => {
+                self.decide_reduced(my_pos, ball_pos, ball_vel, touches, i_am_serving, is_game_running, &mut input);
             }
         }
 
@@ -187,6 +229,151 @@ impl BotController {
         let dist = (my_pos.x - ball_pos.x).abs();
         if dist < 25.0 && ball_pos.y > 350.0 && my_vel_y >= 0.0 {
             input.up = true;
+        }
+    }
+
+    /// Amateur AI: Intermediate tier between Novice and Regular.
+    /// Uses trajectory estimation to reliably position without deadband delay,
+    /// primarily returns cleanly from the ground, and hops forward on touch 2.
+    fn decide_amateur(
+        &mut self,
+        my_pos: Vec2,
+        my_vel_y: f32,
+        ball_pos: Vec2,
+        ball_vel: Vec2,
+        touches: i32,
+        i_am_serving: bool,
+        is_game_running: bool,
+        input: &mut PlayerInput,
+    ) {
+        if !is_game_running {
+            if i_am_serving {
+                let target_x = ball_pos.x - 4.0;
+                if moveto(my_pos.x, target_x, input) {
+                    input.up = true;
+                }
+            } else {
+                moveto(my_pos.x, 125.0, input);
+            }
+            return;
+        }
+
+        let head_y = 379.5;
+        let impact_head = estimate_x_at_y(ball_pos, ball_vel, head_y, true);
+
+        if let Some((target_x, _, time_to_hit)) = impact_head {
+            if target_x > 395.0 {
+                // Ball will land on opponent side
+                moveto(my_pos.x, 125.0, input);
+            } else {
+                let clamped_x = target_x.clamp(40.0, 360.0);
+                moveto(my_pos.x, clamped_x, input);
+
+                // On touch 2 or high return, push forward with a hop
+                if touches >= 2 && time_to_hit <= 18.0 && (my_pos.x - clamped_x).abs() < 22.0 && my_vel_y >= 0.0 {
+                    input.up = true;
+                }
+            }
+        } else {
+            let safe_x = if ball_pos.x > 380.0 { 125.0 } else { ball_pos.x.clamp(45.0, 360.0) };
+            moveto(my_pos.x, safe_x, input);
+        }
+    }
+
+    /// Master AI: Advanced tier between Regular (Combot 1.1) and Pro (Reduced).
+    /// Combines lethal sprungattacke jump spikes with proactive panic dive saves.
+    fn decide_advanced(
+        &mut self,
+        my_pos: Vec2,
+        _my_vel_y: f32,
+        ball_pos: Vec2,
+        ball_vel: Vec2,
+        touches: i32,
+        i_am_serving: bool,
+        is_game_running: bool,
+        input: &mut PlayerInput,
+    ) {
+        if !is_game_running {
+            if i_am_serving {
+                self.next_smash = true;
+                let target_x = ball_pos.x + self.serve_offset;
+                if moveto(my_pos.x, target_x, input) {
+                    input.up = true;
+                }
+            } else {
+                moveto(my_pos.x, 120.0, input);
+                self.reset_rally();
+            }
+            return;
+        }
+
+        let head_y = 379.5;
+        let net_y = 276.0;
+        let jump_y = 217.0;
+
+        let impact_head = estimate_x_at_y(ball_pos, ball_vel, head_y, true);
+        let impact_net = estimate_x_at_y(ball_pos, ball_vel, net_y, true);
+        let impact_jump = estimate_x_at_y(ball_pos, ball_vel, jump_y, true);
+
+        if touches >= 3 || ball_pos.x > 400.0 {
+            self.next_smash = false;
+        } else if touches == 1 && ball_vel.x.abs() < 3.0 {
+            self.next_smash = true;
+        } else if touches == 2 {
+            self.next_smash = true;
+        }
+
+        // Net tape roller defense
+        if let Some((target_net_x, _, _)) = impact_net {
+            if target_net_x > 355.0 && target_net_x <= 400.0 {
+                self.next_smash = true;
+            }
+        }
+
+        // If ball heading to opponent side, retreat and reset
+        let target = impact_head.map(|(x, _, _)| x).unwrap_or(800.0);
+        if target > 395.0 && ball_pos.x > 380.0 {
+            moveto(my_pos.x, 120.0, input);
+            self.reset_rally();
+            return;
+        }
+
+        // High smash attack
+        if self.next_smash {
+            if let Some((target_jump_x, target_speed, time_to_jump)) = impact_jump {
+                if target_jump_x < 380.0 && target_jump_x > 40.0 && target_speed.abs() < 3.5 {
+                    let net_dist_ratio = (target_jump_x / 360.0).clamp(0.0, 1.0);
+                    let min_power = 28.0 + 10.0 * net_dist_ratio;
+                    let max_power = 55.0 - 10.0 * net_dist_ratio;
+                    let power = self.attack_power.clamp(min_power, max_power);
+
+                    let attack_x = (target_jump_x - power).clamp(35.0, 365.0);
+                    moveto(my_pos.x, attack_x, input);
+
+                    if time_to_jump <= 31.5 && (my_pos.x - attack_x).abs() < 24.0 {
+                        input.up = true;
+                    }
+                    return;
+                }
+            }
+        }
+
+        // Ground receive with Reduced-style panic dive saves
+        if let Some((target_low, est_vx, timeto)) = impact_head {
+            let naive_target = ball_pos.x + ball_vel.x * timeto;
+            let balldir = if est_vx > 0.0 { 1.0 } else { -1.0 };
+            let in_time = timeto > (balldir * (target_low - my_pos.x) - 12.0) / BLOBBY_SPEED;
+
+            if in_time || naive_target >= 400.0 {
+                moveto(my_pos.x, target_low.clamp(35.0, 365.0), input);
+            } else if naive_target < 400.0 {
+                // PANIC DIVE!
+                moveto(my_pos.x, target_low, input);
+                input.up = true;
+            }
+        } else {
+            let safe_x = if ball_pos.x > 380.0 { 120.0 } else { ball_pos.x.clamp(45.0, 360.0) };
+            moveto(my_pos.x, safe_x, input);
         }
     }
 

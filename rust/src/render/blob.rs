@@ -80,6 +80,42 @@ impl BlobTheme {
             BlobTheme::IceWhite => BlobTheme::ElectricCyan,
         }
     }
+
+    pub fn prev(self) -> Self {
+        match self {
+            BlobTheme::ElectricCyan => BlobTheme::IceWhite,
+            BlobTheme::SunsetOrange => BlobTheme::ElectricCyan,
+            BlobTheme::NeonMagenta => BlobTheme::SunsetOrange,
+            BlobTheme::AcidLime => BlobTheme::NeonMagenta,
+            BlobTheme::RoyalPurple => BlobTheme::AcidLime,
+            BlobTheme::CyberYellow => BlobTheme::RoyalPurple,
+            BlobTheme::IceWhite => BlobTheme::CyberYellow,
+        }
+    }
+
+    pub fn from_index(idx: usize) -> Self {
+        match idx {
+            0 => BlobTheme::ElectricCyan,
+            1 => BlobTheme::SunsetOrange,
+            2 => BlobTheme::NeonMagenta,
+            3 => BlobTheme::AcidLime,
+            4 => BlobTheme::RoyalPurple,
+            5 => BlobTheme::CyberYellow,
+            _ => BlobTheme::IceWhite,
+        }
+    }
+
+    pub fn to_index(self) -> usize {
+        match self {
+            BlobTheme::ElectricCyan => 0,
+            BlobTheme::SunsetOrange => 1,
+            BlobTheme::NeonMagenta => 2,
+            BlobTheme::AcidLime => 3,
+            BlobTheme::RoyalPurple => 4,
+            BlobTheme::CyberYellow => 5,
+            BlobTheme::IceWhite => 6,
+        }
+    }
 }
 
 pub fn render_blobby(
