@@ -144,6 +144,11 @@ impl GameLogic {
         self.touches[player.opponent().index()] = 0;
     }
 
+    pub fn on_ball_crosses_net(&mut self, _new_side: PlayerSide) {
+        self.touches = [0, 0];
+        self.squish = [0, 0];
+    }
+
     pub fn on_ball_hits_ground(&mut self, side: PlayerSide) {
         if self.squish_ground > 0 || !self.is_ball_valid {
             return;

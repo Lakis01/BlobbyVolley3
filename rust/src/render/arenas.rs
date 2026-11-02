@@ -4,6 +4,14 @@
 use macroquad::prelude::*;
 use glam::Vec2;
 use crate::constants::*;
+use crate::physics::PlayerSide;
+
+#[derive(Debug, Clone, Copy, Default)]
+pub struct CheerState {
+    pub last_scorer: Option<PlayerSide>,
+    pub cheer_timer: f32,
+    pub match_winner: Option<PlayerSide>,
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ArenaType {
@@ -84,7 +92,7 @@ impl ArenaType {
     }
 }
 
-pub fn render_arena(arena: ArenaType, time: f32, view_x0: f32, view_w: f32, ball_pos: Vec2) {
+pub fn render_arena(arena: ArenaType, time: f32, view_x0: f32, view_w: f32, ball_pos: Vec2, cheer: CheerState) {
     // Calculate full dynamic screen bounds to seamlessly fill all displays (e.g. 16:10, 16:9, 21:9 ultrawide)
     let x_left = view_x0.min(-250.0);
     let x_right = (view_x0 + view_w).max(1050.0);
@@ -92,9 +100,9 @@ pub fn render_arena(arena: ArenaType, time: f32, view_x0: f32, view_w: f32, ball
 
     match arena {
         ArenaType::SunsetBeach => render_sunset_beach(time, x_left, x_right, full_w),
-        ArenaType::GrandStadium => render_grand_stadium(time, x_left, x_right, full_w, ball_pos),
-        ArenaType::CyberNeon => render_cyber_neon(time, x_left, x_right, full_w, ball_pos),
-        ArenaType::OlympicBeach => render_olympic_beach(time, x_left, x_right, full_w, ball_pos),
+        ArenaType::GrandStadium => render_grand_stadium(time, x_left, x_right, full_w, ball_pos, cheer),
+        ArenaType::CyberNeon => render_cyber_neon(time, x_left, x_right, full_w, ball_pos, cheer),
+        ArenaType::OlympicBeach => render_olympic_beach(time, x_left, x_right, full_w, ball_pos, cheer),
         ArenaType::ClassicRemaster => render_classic_remaster(time, x_left, x_right, full_w),
         ArenaType::AlpinePeaks => render_alpine_peaks(time, x_left, x_right, full_w),
         ArenaType::MagmaCaldera => render_magma_caldera(time, x_left, x_right, full_w),
@@ -210,7 +218,7 @@ fn render_sunset_beach(time: f32, x_left: f32, x_right: f32, full_w: f32) {
 // =========================================================================
 // 2. BLOBBY GRAND ARENA (Premier World Championship Stadium with Spectators)
 // =========================================================================
-fn render_grand_stadium(time: f32, x_left: f32, x_right: f32, full_w: f32, ball_pos: Vec2) {
+fn render_grand_stadium(time: f32, x_left: f32, x_right: f32, full_w: f32, ball_pos: Vec2, cheer: CheerState) {
     // 1. Indoor Stadium Enclosed Ceiling Dome
     let ceiling_h = 175.0;
     for i in 0..10 {
@@ -238,48 +246,47 @@ fn render_grand_stadium(time: f32, x_left: f32, x_right: f32, full_w: f32, ball_
     draw_rectangle(180.0, arch_y + 18.0, 32.0, 18.0, Color::new(0.08, 0.1, 0.15, 0.95));
     draw_rectangle(590.0, arch_y + 18.0, 32.0, 18.0, Color::new(0.08, 0.1, 0.15, 0.95));
 
-    // 2. Giant Center-Hung 4-Sided Arena Jumbotron Screen (x: 285..515, y: 78..152)
-    let j_x = 285.0;
-    let j_y = 78.0;
-    let j_w = 230.0;
-    let j_h = 74.0;
-    // Cables from ceiling truss
-    draw_line(j_x + 20.0, arch_y + 18.0, j_x + 20.0, j_y, 2.0, Color::new(0.15, 0.2, 0.28, 0.9));
-    draw_line(j_x + j_w - 20.0, arch_y + 18.0, j_x + j_w - 20.0, j_y, 2.0, Color::new(0.15, 0.2, 0.28, 0.9));
+    // 2. Twin Sideline Arena Display Boards (x: 40..220 and 580..760)
+    // Placed on the stadium wings so the center court is 100% unobstructed for the HUD
+    let screens = [(55.0, 78.0, 185.0, 68.0, "★ TEAM BLUE ★"), (560.0, 78.0, 185.0, 68.0, "★ TEAM RED ★")];
+    for &(sx, sy, sw, sh, s_title) in &screens {
+        // Cables from ceiling truss
+        draw_line(sx + 15.0, arch_y + 18.0, sx + 15.0, sy, 2.0, Color::new(0.15, 0.2, 0.28, 0.9));
+        draw_line(sx + sw - 15.0, arch_y + 18.0, sx + sw - 15.0, sy, 2.0, Color::new(0.15, 0.2, 0.28, 0.9));
 
-    // Jumbotron Chassis Frame
-    draw_rectangle(j_x - 3.0, j_y - 3.0, j_w + 6.0, j_h + 6.0, Color::new(0.08, 0.1, 0.15, 0.98));
-    draw_rectangle_lines(j_x - 3.0, j_y - 3.0, j_w + 6.0, j_h + 6.0, 2.0, Color::new(0.95, 0.75, 0.2, 0.85));
+        // Chassis Frame
+        draw_rectangle(sx - 2.0, sy - 2.0, sw + 4.0, sh + 4.0, Color::new(0.08, 0.1, 0.15, 0.98));
+        draw_rectangle_lines(sx - 2.0, sy - 2.0, sw + 4.0, sh + 4.0, 1.5, Color::new(0.95, 0.75, 0.2, 0.85));
 
-    // Screen display
-    draw_rectangle(j_x, j_y, j_w, j_h, Color::new(0.04, 0.07, 0.16, 1.0));
+        // Screen display
+        draw_rectangle(sx, sy, sw, sh, Color::new(0.04, 0.07, 0.16, 1.0));
 
-    // Jumbotron Header Banner
-    let pulse = (time * 4.0).sin().abs() * 0.2 + 0.8;
-    draw_rectangle(j_x, j_y, j_w, 16.0, Color::new(0.1, 0.25, 0.55, 0.9));
-    let title = "★ BLOBBY WORLD CHAMPIONSHIP ★";
-    let title_dim = measure_text(title, None, 10, 1.0);
-    draw_text(title, j_x + (j_w - title_dim.width) * 0.5, j_y + 12.0, 10.0, Color::new(1.0, 0.85, 0.25, pulse));
+        // Header
+        let pulse = (time * 4.0).sin().abs() * 0.2 + 0.8;
+        draw_rectangle(sx, sy, sw, 15.0, Color::new(0.1, 0.22, 0.48, 0.9));
+        let title_dim = measure_text(s_title, None, 10, 1.0);
+        draw_text(s_title, sx + (sw - title_dim.width) * 0.5, sy + 11.0, 10.0, Color::new(1.0, 0.85, 0.25, pulse));
 
-    // Jumbotron Live Audio / Sine Visualizer Bars
-    for bar in 0..18 {
-        let bx = j_x + 18.0 + bar as f32 * 11.0;
-        let bar_h = (time * 7.0 + bar as f32 * 0.7).sin().abs() * 24.0 + 5.0;
-        let by = j_y + 48.0 - bar_h * 0.5;
-        let col = if bar % 2 == 0 { Color::new(0.2, 0.95, 1.0, 0.9) } else { Color::new(1.0, 0.35, 0.75, 0.9) };
-        draw_rectangle(bx, by, 7.0, bar_h, col);
+        // Live Audio / Sine Visualizer Bars
+        for bar in 0..12 {
+            let bx = sx + 12.0 + bar as f32 * 13.5;
+            let bar_h = (time * 6.0 + bar as f32 * 0.8 + sx * 0.01).sin().abs() * 20.0 + 4.0;
+            let by = sy + 44.0 - bar_h * 0.5;
+            let col = if bar % 2 == 0 { Color::new(0.2, 0.95, 1.0, 0.9) } else { Color::new(1.0, 0.35, 0.75, 0.9) };
+            draw_rectangle(bx, by, 7.0, bar_h, col);
+        }
+
+        // Screen Live Ticker
+        draw_rectangle(sx, sy + sh - 13.0, sw, 13.0, Color::new(0.05, 0.08, 0.16, 0.95));
+        let ticker_msg = "OFFICIAL 2026 WORLD TOUR";
+        let t_dim = measure_text(ticker_msg, None, 8, 1.0);
+        draw_text(ticker_msg, sx + (sw - t_dim.width) * 0.5, sy + sh - 3.0, 8.0, Color::new(0.4, 0.95, 1.0, 0.85));
     }
-
-    // Jumbotron Bottom Live Ticker
-    draw_rectangle(j_x, j_y + j_h - 14.0, j_w, 14.0, Color::new(0.05, 0.08, 0.16, 0.95));
-    let ticker_msg = "LIVE IN 4K • OFFICIAL 2026 TOUR";
-    let t_dim = measure_text(ticker_msg, None, 9, 1.0);
-    draw_text(ticker_msg, j_x + (j_w - t_dim.width) * 0.5, j_y + j_h - 3.5, 9.0, Color::new(0.4, 0.95, 1.0, 0.9));
 
     // 3. Upper Balcony Tier Bleachers (y = 165, 192, 219)
     let upper_rows = [165.0, 192.0, 219.0];
     let upper_scales = [0.48, 0.53, 0.58];
-    render_stadium_crowd(time, x_left, x_right, &upper_rows, &upper_scales, CrowdStyle::GrandColiseum, ball_pos);
+    render_stadium_crowd(time, x_left, x_right, &upper_rows, &upper_scales, CrowdStyle::GrandColiseum, ball_pos, cheer);
 
     // Balcony Tier Concrete Fascia & LED Ribbon Board
     let fascia_y = 236.0;
@@ -299,16 +306,16 @@ fn render_grand_stadium(time: f32, x_left: f32, x_right: f32, full_w: f32, ball_
     // 4. Lower Main Grandstand Bleachers (y = 272, 302, 332, 362, 392)
     let lower_rows = [272.0, 302.0, 332.0, 362.0, 392.0];
     let lower_scales = [0.65, 0.72, 0.79, 0.86, 0.93];
-    render_stadium_crowd(time, x_left, x_right, &lower_rows, &lower_scales, CrowdStyle::GrandColiseum, ball_pos);
+    render_stadium_crowd(time, x_left, x_right, &lower_rows, &lower_scales, CrowdStyle::GrandColiseum, ball_pos, cheer);
 
     // 5. Hardwood Parquet Championship Court Floor
     let court_top = GROUND_PLANE_HEIGHT_MAX - 75.0; // 425.0
-    let court_h = VIRTUAL_HEIGHT - court_top + 50.0;
+    let court_h = VIRTUAL_HEIGHT - court_top + 150.0;
     draw_rectangle(x_left, court_top, full_w, court_h, Color::new(0.84, 0.65, 0.42, 1.0));
     draw_rectangle(0.0, court_top, VIRTUAL_WIDTH, court_h, Color::new(0.89, 0.70, 0.46, 0.6));
 
     // Parquet horizontal wood plank grooves
-    for p in 0..12 {
+    for p in 0..14 {
         let py = court_top + p as f32 * 18.0;
         let shade = if p % 2 == 0 { Color::new(0.78, 0.58, 0.36, 0.6) } else { Color::new(0.92, 0.74, 0.49, 0.3) };
         draw_line(x_left, py, x_right, py, 1.2, shade);
@@ -318,7 +325,7 @@ fn render_grand_stadium(time: f32, x_left: f32, x_right: f32, full_w: f32, ball_
 // =========================================================================
 // 3. NEO TOKYO CYBER STADIUM (Synthwave / Cyberpunk Full-Screen Grid with Cyber Crowd)
 // =========================================================================
-fn render_cyber_neon(time: f32, x_left: f32, x_right: f32, full_w: f32, ball_pos: Vec2) {
+fn render_cyber_neon(time: f32, x_left: f32, x_right: f32, full_w: f32, ball_pos: Vec2, cheer: CheerState) {
     let bands = 14;
     for i in 0..bands {
         let t = i as f32 / bands as f32;
@@ -380,7 +387,7 @@ fn render_cyber_neon(time: f32, x_left: f32, x_right: f32, full_w: f32, ball_pos
     // Neon Cyber Stadium Bleachers packed with Cyber-Blob Spectators!
     let cyber_rows = [245.0, 282.0, 319.0, 356.0, 392.0];
     let cyber_scales = [0.63, 0.71, 0.79, 0.87, 0.94];
-    render_stadium_crowd(time, x_left, x_right, &cyber_rows, &cyber_scales, CrowdStyle::Cyberpunk, ball_pos);
+    render_stadium_crowd(time, x_left, x_right, &cyber_rows, &cyber_scales, CrowdStyle::Cyberpunk, ball_pos, cheer);
 
     // 3D Perspective Cyber Grid Floor
     let grid_top = GROUND_PLANE_HEIGHT_MAX - 75.0; // 425.0
@@ -405,7 +412,7 @@ fn render_cyber_neon(time: f32, x_left: f32, x_right: f32, full_w: f32, ball_pos
 // =========================================================================
 // 4. OLYMPIC BEACH STADIUM (Open-Air Seaside Tournament Grandstands)
 // =========================================================================
-fn render_olympic_beach(time: f32, x_left: f32, x_right: f32, full_w: f32, ball_pos: Vec2) {
+fn render_olympic_beach(time: f32, x_left: f32, x_right: f32, full_w: f32, ball_pos: Vec2, cheer: CheerState) {
     // 1. Sunny Coastal Azure Sky
     let sky_h = 240.0;
     for i in 0..10 {
@@ -493,7 +500,7 @@ fn render_olympic_beach(time: f32, x_left: f32, x_right: f32, full_w: f32, ball_
     // 3. Bleacher Rows filled with Beach Blob Spectators
     let beach_rows = [248.0, 284.0, 320.0, 356.0, 392.0];
     let beach_scales = [0.64, 0.71, 0.78, 0.85, 0.92];
-    render_stadium_crowd(time, x_left, x_right, &beach_rows, &beach_scales, CrowdStyle::OlympicBeach, ball_pos);
+    render_stadium_crowd(time, x_left, x_right, &beach_rows, &beach_scales, CrowdStyle::OlympicBeach, ball_pos, cheer);
 
     // 4. Golden Sand Court
     let sand_top = GROUND_PLANE_HEIGHT_MAX - 75.0;
@@ -987,6 +994,7 @@ fn render_stadium_crowd(
     row_scales: &[f32],
     style: CrowdStyle,
     ball_pos: Vec2,
+    cheer: CheerState,
 ) {
     let full_w = x_right - x_left;
     let num_rows = row_y_coords.len();
@@ -1028,7 +1036,7 @@ fn render_stadium_crowd(
             }
         }
 
-        // 2. Spectator Blobs
+        // 2. Spectator Blobs with Persistent Loyalty & Reactions
         let step_x = 22.0 * scale;
         let mut col = 0;
         let mut cur_x = x_left + 8.0 * scale;
@@ -1046,6 +1054,23 @@ fn render_stadium_crowd(
             let jitter_x = ((seed * 77.0).fract() - 0.5) * 5.0 * scale;
             let spec_x = cur_x_pos + jitter_x;
 
+            // Persistent Loyalty Assignment:
+            // Blobs tendentially sit in the half of the player they support, with natural mixed random seating
+            let seat_rand = ((col as f32 * 91.31 + r as f32 * 53.79).sin() * 43758.54).fract().abs();
+            let prob_left = if spec_x < 340.0 {
+                0.82
+            } else if spec_x > 460.0 {
+                0.18
+            } else {
+                0.82 - ((spec_x - 340.0) / 120.0) * 0.64
+            };
+            let favored_side = if seat_rand < prob_left { PlayerSide::Left } else { PlayerSide::Right };
+
+            let is_favored_scorer = cheer.last_scorer == Some(favored_side) && cheer.cheer_timer > 0.0;
+            let is_favored_winner = cheer.match_winner == Some(favored_side);
+            let is_rival_scorer = cheer.last_scorer == Some(favored_side.opponent()) && cheer.cheer_timer > 0.0;
+            let is_rival_winner = cheer.match_winner == Some(favored_side.opponent());
+
             // Stadium Wave ("La Ola")
             let wave_speed = 3.6;
             let wave_phase = spec_x * 0.013 - time * wave_speed;
@@ -1061,39 +1086,51 @@ fn render_stadium_crowd(
                 0.0
             };
 
-            let total_lift = wave_lift + hyper_hop + bounce;
+            // Celebratory Jump when favored player scores or wins!
+            let mut cheer_lift = 0.0;
+            let mut is_cheering = false;
+            if is_favored_winner {
+                // Extra hard celebratory cheering when preferred player wins the match!
+                let intensity = (time * 8.5 + col as f32 * 1.3).sin().max(0.0).powf(1.8);
+                cheer_lift = intensity * (22.0 * scale);
+                is_cheering = true;
+            } else if is_favored_scorer {
+                // Cheering when preferred player scores a point!
+                let fade = (cheer.cheer_timer / 2.5).clamp(0.0, 1.0);
+                let jump = (time * 7.5 + col as f32 * 1.5).sin().max(0.0).powf(2.0);
+                cheer_lift = jump * (15.0 * scale) * fade;
+                is_cheering = true;
+            } else if is_rival_scorer || is_rival_winner {
+                cheer_lift = -2.5 * scale;
+            }
+
+            let total_lift = (wave_lift + hyper_hop + bounce + cheer_lift).max(-3.0 * scale);
             let spec_y = row_y - total_lift;
 
             // Squash and stretch
-            let stretch_y = 1.0 + (total_lift / (15.0 * scale)).clamp(0.0, 0.45);
-            let stretch_x = 1.0 / stretch_y.sqrt();
+            let stretch_y = 1.0 + (total_lift / (15.0 * scale)).clamp(-0.2, 0.55);
+            let stretch_x = 1.0 / stretch_y.abs().max(0.5).sqrt();
 
-            // Fan Color Allocation
+            // Fan Color Allocation reflecting team preference
             let fan_rand = ((col as f32 * 47.9 + r as f32 * 83.1).sin() * 12345.67).fract().abs();
-            let raw_col = if spec_x < 370.0 {
-                match ((fan_rand * 10.0) as usize) % 5 {
-                    0 => Color::new(0.18, 0.65, 1.0, 1.0),
-                    1 => Color::new(0.2, 0.88, 0.45, 1.0),
-                    2 => Color::new(0.15, 0.95, 0.9, 1.0),
-                    3 => Color::new(0.55, 0.92, 0.2, 1.0),
-                    _ => Color::new(0.88, 0.92, 0.96, 1.0),
+            let raw_col = match favored_side {
+                PlayerSide::Left => {
+                    match ((fan_rand * 10.0) as usize) % 5 {
+                        0 => Color::new(0.18, 0.65, 1.0, 1.0),
+                        1 => Color::new(0.2, 0.88, 0.45, 1.0),
+                        2 => Color::new(0.15, 0.95, 0.9, 1.0),
+                        3 => Color::new(0.35, 0.72, 1.0, 1.0),
+                        _ => Color::new(0.92, 0.95, 1.0, 1.0),
+                    }
                 }
-            } else if spec_x > 430.0 {
-                match ((fan_rand * 10.0) as usize) % 5 {
-                    0 => Color::new(0.98, 0.32, 0.32, 1.0),
-                    1 => Color::new(1.0, 0.58, 0.15, 1.0),
-                    2 => Color::new(1.0, 0.82, 0.2, 1.0),
-                    3 => Color::new(0.75, 0.3, 0.95, 1.0),
-                    _ => Color::new(1.0, 0.42, 0.7, 1.0),
-                }
-            } else {
-                match ((fan_rand * 12.0) as usize) % 6 {
-                    0 => Color::new(0.2, 0.75, 1.0, 1.0),
-                    1 => Color::new(0.98, 0.35, 0.35, 1.0),
-                    2 => Color::new(1.0, 0.85, 0.25, 1.0),
-                    3 => Color::new(0.3, 0.92, 0.5, 1.0),
-                    4 => Color::new(0.8, 0.35, 1.0, 1.0),
-                    _ => Color::new(0.88, 0.9, 0.95, 1.0),
+                PlayerSide::Right => {
+                    match ((fan_rand * 10.0) as usize) % 5 {
+                        0 => Color::new(0.98, 0.32, 0.32, 1.0),
+                        1 => Color::new(1.0, 0.58, 0.15, 1.0),
+                        2 => Color::new(1.0, 0.82, 0.2, 1.0),
+                        3 => Color::new(0.85, 0.3, 0.95, 1.0),
+                        _ => Color::new(1.0, 0.42, 0.7, 1.0),
+                    }
                 }
             };
 
@@ -1118,7 +1155,7 @@ fn render_stadium_crowd(
             // Specular head highlight
             draw_circle(spec_x - head_r * 0.32, head_y - head_r * 0.32, head_r * 0.3, Color::new(1.0, 1.0, 1.0, 0.38 * depth));
 
-            // Cute Googly Eyes tracking Ball
+            // Cute Googly Eyes tracking Ball or downcast if rival scores
             let eye_y = head_y;
             let eye_spacing = 2.8 * scale;
             let eye_r = 2.2 * scale;
@@ -1126,7 +1163,11 @@ fn render_stadium_crowd(
 
             let to_ball = Vec2::new(ball_pos.x - spec_x, ball_pos.y - eye_y);
             let dir = to_ball / to_ball.length().max(1.0);
-            let pupil_off = dir * (1.0 * scale);
+            let pupil_off = if is_rival_scorer || is_rival_winner {
+                Vec2::new(0.0, 1.1 * scale)
+            } else {
+                dir * (1.0 * scale)
+            };
 
             if style == CrowdStyle::Cyberpunk && fan_rand > 0.45 {
                 let visor_w = 11.5 * scale;
@@ -1158,19 +1199,20 @@ fn render_stadium_crowd(
                 }
             }
 
-            // Cheering arms up
-            if total_lift > 5.0 * scale {
-                draw_circle(spec_x - body_w * 0.95, spec_y - body_h * 0.65, 2.0 * scale, base_col);
-                draw_circle(spec_x + body_w * 0.95, spec_y - body_h * 0.65, 2.0 * scale, base_col);
+            // Cheering arms raised in the air!
+            if is_cheering || total_lift > 5.0 * scale {
+                draw_circle(spec_x - body_w * 0.95, spec_y - body_h * 0.72, 2.2 * scale, base_col);
+                draw_circle(spec_x + body_w * 0.95, spec_y - body_h * 0.72, 2.2 * scale, base_col);
             }
 
             // Waving Fan Flags
-            if fan_rand > 0.86 {
+            if fan_rand > 0.85 || is_favored_winner {
                 let pole_x = spec_x + body_w * 0.85;
                 let pole_y1 = spec_y;
                 let pole_y0 = spec_y - 14.0 * scale;
                 draw_line(pole_x, pole_y1, pole_x, pole_y0, 1.2 * scale, Color::new(0.7, 0.75, 0.8, 0.8));
-                let flap = (time * 8.0 + spec_x * 0.2).sin() * (2.2 * scale);
+                let flag_speed = if is_cheering { 16.0 } else { 8.0 };
+                let flap = (time * flag_speed + spec_x * 0.2).sin() * (2.8 * scale);
                 draw_triangle(
                     Vec2::new(pole_x, pole_y0),
                     Vec2::new(pole_x + 9.5 * scale, pole_y0 + 3.2 * scale + flap),

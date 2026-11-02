@@ -187,6 +187,9 @@ fn test_bot_vs_bot_rally_simulation() {
                 blobby_core::physics::MatchEvent::BallHitNetTop => {
                     logic.on_ball_hits_net(PlayerSide::Left);
                 }
+                blobby_core::physics::MatchEvent::BallCrossedNet { new_side } => {
+                    logic.on_ball_crosses_net(new_side);
+                }
             }
         }
 
@@ -335,5 +338,31 @@ fn test_stadium_and_arena_cycle() {
         current = current.prev();
     }
     assert_eq!(current, ArenaType::SunsetBeach, "Cycling prev 8 times must return to starting arena");
+}
+
+#[test]
+fn test_touch_counter_reset_on_net_crossing_and_valid_reception() {
+    let mut logic = GameLogic::new(RuleMode::Modern, 15);
+    logic.is_game_running = true;
+
+    // Player 1 hits the ball 3 times legally
+    logic.on_ball_hits_blob(PlayerSide::Left);
+    logic.squish[0] = 0;
+    logic.on_ball_hits_blob(PlayerSide::Left);
+    logic.squish[0] = 0;
+    logic.on_ball_hits_blob(PlayerSide::Left);
+    assert_eq!(logic.touches[0], 3, "Player 1 should have 3 touches");
+    assert!(logic.is_ball_valid, "Ball must remain valid on touch 3");
+
+    // Ball crosses the net to Player 2
+    logic.on_ball_crosses_net(PlayerSide::Right);
+    assert_eq!(logic.touches[0], 0, "Player 1 touches must reset on net crossing");
+    assert_eq!(logic.touches[1], 0, "Player 2 touches must start at 0 on reception");
+    assert!(logic.is_ball_valid, "Ball must be valid for Player 2");
+
+    // Player 2 receives and hits the ball (first contact)
+    logic.on_ball_hits_blob(PlayerSide::Right);
+    assert_eq!(logic.touches[1], 1, "Player 2 touch count must be 1 on first contact");
+    assert!(logic.is_ball_valid, "Ball must remain valid on Player 2 first contact");
 }
 

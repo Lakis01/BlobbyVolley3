@@ -201,16 +201,17 @@ impl NetworkHost {
 
         let net_events: Vec<NetEvent> = events
             .iter()
-            .map(|e| match e {
-                MatchEvent::BallHitBlob { player, intensity } => NetEvent::HitBlob {
+            .filter_map(|e| match e {
+                MatchEvent::BallHitBlob { player, intensity } => Some(NetEvent::HitBlob {
                     player: player.index(),
                     intensity: *intensity,
-                },
-                MatchEvent::BallHitGround { side } => NetEvent::HitGround {
+                }),
+                MatchEvent::BallHitGround { side } => Some(NetEvent::HitGround {
                     side: side.index(),
-                },
-                MatchEvent::BallHitWall { .. } => NetEvent::HitWall,
-                MatchEvent::BallHitNet { .. } | MatchEvent::BallHitNetTop => NetEvent::HitNet,
+                }),
+                MatchEvent::BallHitWall { .. } => Some(NetEvent::HitWall),
+                MatchEvent::BallHitNet { .. } | MatchEvent::BallHitNetTop => Some(NetEvent::HitNet),
+                MatchEvent::BallCrossedNet { .. } => None,
             })
             .collect();
 

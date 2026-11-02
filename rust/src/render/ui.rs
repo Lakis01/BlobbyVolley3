@@ -62,40 +62,125 @@ impl GameMode {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MenuItem {
+    StartMatch,
+    GameMode,
+    PlayerProfile,
+    AiDifficulty,
+    MatchmakingRange,
+    Rules,
+    PointsToWin,
+    Arena,
+    P1Color,
+    P2Color,
+    Fullscreen,
+}
+
+pub fn get_menu_items_for_mode(mode: GameMode) -> Vec<MenuItem> {
+    match mode {
+        GameMode::SinglePlayer => vec![
+            MenuItem::StartMatch,
+            MenuItem::GameMode,
+            MenuItem::PlayerProfile,
+            MenuItem::AiDifficulty,
+            MenuItem::Rules,
+            MenuItem::PointsToWin,
+            MenuItem::Arena,
+            MenuItem::P1Color,
+            MenuItem::Fullscreen,
+        ],
+        GameMode::TwoPlayerLocal => vec![
+            MenuItem::StartMatch,
+            MenuItem::GameMode,
+            MenuItem::PlayerProfile,
+            MenuItem::Rules,
+            MenuItem::PointsToWin,
+            MenuItem::Arena,
+            MenuItem::P1Color,
+            MenuItem::P2Color,
+            MenuItem::Fullscreen,
+        ],
+        GameMode::QuickMatch => vec![
+            MenuItem::StartMatch,
+            MenuItem::GameMode,
+            MenuItem::PlayerProfile,
+            MenuItem::MatchmakingRange,
+            MenuItem::Arena,
+            MenuItem::P1Color,
+            MenuItem::Fullscreen,
+        ],
+        GameMode::BotVsBot => vec![
+            MenuItem::StartMatch,
+            MenuItem::GameMode,
+            MenuItem::AiDifficulty,
+            MenuItem::Rules,
+            MenuItem::PointsToWin,
+            MenuItem::Arena,
+            MenuItem::P1Color,
+            MenuItem::P2Color,
+            MenuItem::Fullscreen,
+        ],
+        GameMode::HostOnline => vec![
+            MenuItem::StartMatch,
+            MenuItem::GameMode,
+            MenuItem::PlayerProfile,
+            MenuItem::Rules,
+            MenuItem::PointsToWin,
+            MenuItem::Arena,
+            MenuItem::P1Color,
+            MenuItem::Fullscreen,
+        ],
+        GameMode::JoinOnline | GameMode::ServerBrowser | GameMode::Leaderboard => vec![
+            MenuItem::StartMatch,
+            MenuItem::GameMode,
+            MenuItem::PlayerProfile,
+            MenuItem::Fullscreen,
+        ],
+    }
+}
+
 #[derive(Debug, Clone, Copy)]
 pub struct MenuRowLayout {
     pub index: usize,
+    pub item: MenuItem,
     pub row_rect: Rect,
     pub left_arrow_rect: Option<Rect>,
     pub right_arrow_rect: Option<Rect>,
 }
 
-pub fn get_main_menu_layout() -> Vec<MenuRowLayout> {
+pub fn get_main_menu_layout(items: &[MenuItem]) -> Vec<MenuRowLayout> {
     let card_w = 660.0;
+    let card_h = 430.0;
     let card_x = (VIRTUAL_WIDTH - card_w) * 0.5;
     let card_y = 115.0;
-    let start_y = card_y + 32.0;
-    let row_h = 35.0;
 
-    let mut rows = Vec::new();
-    for i in 0..11 {
+    let num = items.len().max(1);
+    let row_h = (card_h - 26.0) / num as f32;
+    let start_y = card_y + 14.0 + row_h * 0.5;
+
+    let mut rows = Vec::with_capacity(num);
+    for (i, &item) in items.iter().enumerate() {
         let y = start_y + i as f32 * row_h;
-        let row_rect = Rect::new(card_x + 14.0, y - 18.0, card_w - 28.0, 32.0);
+        let row_rect = Rect::new(card_x + 14.0, y - row_h * 0.44, card_w - 28.0, row_h * 0.88);
 
-        if i == 0 {
+        if item == MenuItem::StartMatch {
             // Action button (START MATCH) - no arrows
             rows.push(MenuRowLayout {
                 index: i,
+                item,
                 row_rect,
                 left_arrow_rect: None,
                 right_arrow_rect: None,
             });
         } else {
             // Settings row with distinct left and right arrow buttons
-            let left_btn = Rect::new(card_x + card_w - 275.0, y - 16.0, 26.0, 26.0);
-            let right_btn = Rect::new(card_x + card_w - 40.0, y - 16.0, 26.0, 26.0);
+            let btn_size = 25.0;
+            let left_btn = Rect::new(card_x + card_w - 275.0, y - btn_size * 0.5, btn_size, btn_size);
+            let right_btn = Rect::new(card_x + card_w - 40.0, y - btn_size * 0.5, btn_size, btn_size);
             rows.push(MenuRowLayout {
                 index: i,
+                item,
                 row_rect,
                 left_arrow_rect: Some(left_btn),
                 right_arrow_rect: Some(right_btn),
@@ -112,15 +197,16 @@ pub fn render_hud(
     left_theme: BlobTheme,
     right_theme: BlobTheme,
     time: f32,
+    serve_countdown: Option<f32>,
 ) {
-    let board_w = 480.0;
-    let board_h = 74.0;
+    let board_w = 640.0;
+    let board_h = 62.0;
     let board_x = (VIRTUAL_WIDTH - board_w) * 0.5;
-    let board_y = 16.0;
+    let board_y = 12.0;
 
-    // Glassmorphism card backdrop
-    draw_rectangle(board_x, board_y, board_w, board_h, Color::new(0.08, 0.1, 0.16, 0.85));
-    draw_rectangle_lines(board_x, board_y, board_w, board_h, 1.5, Color::new(0.4, 0.6, 0.9, 0.45));
+    // Glassmorphism card backdrop with rounded aesthetic
+    draw_rectangle(board_x, board_y, board_w, board_h, Color::new(0.06, 0.09, 0.16, 0.88));
+    draw_rectangle_lines(board_x, board_y, board_w, board_h, 1.5, Color::new(0.25, 0.45, 0.8, 0.5));
 
     // Glow accent line on top of card
     draw_line(
@@ -132,71 +218,116 @@ pub fn render_hud(
         Color::new(0.2, 0.85, 1.0, 0.75),
     );
 
-    // Left player info
-    let (l_core, _, _) = left_theme.colors();
-    draw_circle(board_x + 28.0, board_y + 37.0, 12.0, l_core);
-    draw_text(left_name, board_x + 48.0, board_y + 44.0, 22.0, WHITE);
+    // Center Score Pod: Dedicated slot x: 330..470 (width 140px)
+    let pod_w = 140.0;
+    let pod_h = board_h - 10.0;
+    let pod_x = (VIRTUAL_WIDTH - pod_w) * 0.5;
+    let pod_y = board_y + 5.0;
 
-    // Left serving indicator
-    if logic.serving_player == PlayerSide::Left {
-        let pulse = (time * 6.0).sin().abs() * 0.4 + 0.6;
-        draw_circle(board_x + 28.0, board_y + 37.0, 16.0, Color::new(1.0, 0.85, 0.1, pulse * 0.7));
-    }
+    draw_rectangle(pod_x, pod_y, pod_w, pod_h, Color::new(0.04, 0.06, 0.12, 0.95));
+    draw_rectangle_lines(pod_x, pod_y, pod_w, pod_h, 1.0, Color::new(0.3, 0.6, 0.95, 0.4));
 
-    // Right player info
-    let (r_core, _, _) = right_theme.colors();
-    draw_circle(board_x + board_w - 28.0, board_y + 37.0, 12.0, r_core);
-    let r_text_w = measure_text(right_name, None, 22, 1.0).width;
-    draw_text(right_name, board_x + board_w - 48.0 - r_text_w, board_y + 44.0, 22.0, WHITE);
+    // Match Mode Header inside Score Pod
+    let mode_str = match logic.rule_mode {
+        RuleMode::Modern => format!("RALLY TO {}", logic.score_to_win),
+        RuleMode::Classic => format!("FIRST TO {} (SIDE-OUT)", logic.score_to_win),
+    };
+    let mode_dim = measure_text(&mode_str, None, 10, 1.0);
+    draw_text(&mode_str, (VIRTUAL_WIDTH - mode_dim.width) * 0.5, pod_y + 13.0, 10.0, Color::new(0.4, 0.85, 1.0, 0.85));
 
-    // Right serving indicator
-    if logic.serving_player == PlayerSide::Right {
-        let pulse = (time * 6.0).sin().abs() * 0.4 + 0.6;
-        draw_circle(board_x + board_w - 28.0, board_y + 37.0, 16.0, Color::new(1.0, 0.85, 0.1, pulse * 0.7));
-    }
-
-    // Score display in center
+    // LED Score Display inside Pod
     let score_str = format!("{}  :  {}", logic.scores[0], logic.scores[1]);
-    let score_dim = measure_text(&score_str, None, 38, 1.0);
+    let score_dim = measure_text(&score_str, None, 32, 1.0);
     draw_text(
         &score_str,
         (VIRTUAL_WIDTH - score_dim.width) * 0.5,
-        board_y + 48.0,
-        38.0,
-        Color::new(1.0, 0.95, 0.4, 1.0),
+        pod_y + 42.0,
+        32.0,
+        Color::new(1.0, 0.95, 0.35, 1.0),
     );
 
-    // Subtitle info: First to N points & Rule Mode (using clean ASCII hyphen)
-    let mode_str = match logic.rule_mode {
-        RuleMode::Modern => "RALLY POINTS",
-        RuleMode::Classic => "CLASSIC SIDE-OUT",
-    };
-    let sub_str = format!("FIRST TO {}  -  {}", logic.score_to_win, mode_str);
-    let sub_dim = measure_text(&sub_str, None, 13, 1.0);
-    draw_text(
-        &sub_str,
-        (VIRTUAL_WIDTH - sub_dim.width) * 0.5,
-        board_y + 66.0,
-        13.0,
-        Color::new(0.8, 0.85, 0.95, 0.75),
-    );
+    // Left Player Slot: x from board_x + 12 to pod_x - 10 (available width ~ 238px)
+    let left_max_w = pod_x - board_x - 45.0;
+    let (l_core, _, _) = left_theme.colors();
+    let l_pip_x = board_x + 22.0;
+    let l_pip_y = board_y + board_h * 0.5;
+    draw_circle(l_pip_x, l_pip_y, 11.0, l_core);
 
-    // Rally counter pill if rally > 1
+    if logic.serving_player == PlayerSide::Left {
+        let pulse = (time * 6.0).sin().abs() * 0.4 + 0.6;
+        draw_circle(l_pip_x, l_pip_y, 15.0, Color::new(1.0, 0.85, 0.1, pulse * 0.7));
+    }
+
+    // Clip / truncate Left Name if too long so it NEVER collides with score pod
+    let mut l_display = left_name.to_string();
+    while measure_text(&l_display, None, 18, 1.0).width > left_max_w && l_display.len() > 4 {
+        l_display.pop();
+    }
+    if l_display.len() < left_name.len() {
+        l_display.push_str("..");
+    }
+    draw_text(&l_display, board_x + 40.0, board_y + 37.0, 18.0, WHITE);
+
+    // Right Player Slot: x from pod_x + pod_w + 10 to board_x + board_w - 12
+    let right_max_w = board_x + board_w - (pod_x + pod_w) - 45.0;
+    let (r_core, _, _) = right_theme.colors();
+    let r_pip_x = board_x + board_w - 22.0;
+    let r_pip_y = board_y + board_h * 0.5;
+    draw_circle(r_pip_x, r_pip_y, 11.0, r_core);
+
+    if logic.serving_player == PlayerSide::Right {
+        let pulse = (time * 6.0).sin().abs() * 0.4 + 0.6;
+        draw_circle(r_pip_x, r_pip_y, 15.0, Color::new(1.0, 0.85, 0.1, pulse * 0.7));
+    }
+
+    let mut r_display = right_name.to_string();
+    while measure_text(&r_display, None, 18, 1.0).width > right_max_w && r_display.len() > 4 {
+        r_display.pop();
+    }
+    if r_display.len() < right_name.len() {
+        r_display.push_str("..");
+    }
+    let r_w = measure_text(&r_display, None, 18, 1.0).width;
+    draw_text(&r_display, r_pip_x - 18.0 - r_w, board_y + 37.0, 18.0, WHITE);
+
+    // Floating Rally counter pill below HUD if rally > 1
     if logic.stats.current_rally_hits > 1 {
         let rally_str = format!("RALLY: {}", logic.stats.current_rally_hits);
-        let rally_dim = measure_text(&rally_str, None, 14, 1.0);
-        let rw = rally_dim.width + 18.0;
+        let rally_dim = measure_text(&rally_str, None, 13, 1.0);
+        let rw = rally_dim.width + 16.0;
         let rx = (VIRTUAL_WIDTH - rw) * 0.5;
-        let ry = board_y + board_h + 8.0;
+        let ry = board_y + board_h + 6.0;
 
-        draw_rectangle(rx, ry, rw, 22.0, Color::new(0.1, 0.15, 0.25, 0.85));
-        draw_rectangle_lines(rx, ry, rw, 22.0, 1.0, Color::new(0.2, 0.8, 1.0, 0.6));
-        draw_text(&rally_str, rx + 9.0, ry + 16.0, 14.0, Color::new(0.4, 0.95, 1.0, 1.0));
+        draw_rectangle(rx, ry, rw, 20.0, Color::new(0.08, 0.12, 0.22, 0.9));
+        draw_rectangle_lines(rx, ry, rw, 20.0, 1.0, Color::new(0.2, 0.85, 1.0, 0.6));
+        draw_text(&rally_str, rx + 8.0, ry + 14.5, 13.0, Color::new(0.4, 0.95, 1.0, 1.0));
+    }
+
+    // Online Serve Countdown Pill
+    if let Some(cd) = serve_countdown {
+        if cd > 0.0 {
+            let cd_sec = cd.ceil() as i32;
+            let cd_str = if cd_sec <= 1 {
+                "SERVE NOW!".to_string()
+            } else {
+                format!("SERVE IN {}s", cd_sec)
+            };
+            let cd_dim = measure_text(&cd_str, None, 16, 1.0);
+            let cw = cd_dim.width + 24.0;
+            let cx = (VIRTUAL_WIDTH - cw) * 0.5;
+            let cy = board_y + board_h + 30.0;
+
+            let pulse = (cd * 8.0).sin().abs() * 0.25 + 0.75;
+            draw_rectangle(cx, cy, cw, 26.0, Color::new(0.12, 0.05, 0.02, 0.92));
+            draw_rectangle_lines(cx, cy, cw, 26.0, 1.5, Color::new(1.0, 0.7, 0.1, pulse));
+            draw_text(&cd_str, cx + 12.0, cy + 18.0, 16.0, Color::new(1.0, 0.85, 0.2, pulse));
+        }
     }
 }
 
 pub fn render_main_menu(
     game_mode: GameMode,
+    items: &[MenuItem],
     player1_name: &str,
     country_code: &str,
     difficulty: AiDifficulty,
@@ -243,7 +374,7 @@ pub fn render_main_menu(
     draw_rectangle(card_x, card_y, card_w, card_h, Color::new(0.08, 0.1, 0.18, 0.92));
     draw_rectangle_lines(card_x, card_y, card_w, card_h, 1.5, Color::new(0.3, 0.5, 0.85, 0.5));
 
-    let layouts = get_main_menu_layout();
+    let layouts = get_main_menu_layout(items);
 
     let profile_display = if country_code.is_empty() {
         player1_name.to_string()
@@ -251,25 +382,32 @@ pub fn render_main_menu(
         format!("{} {}", country_badge(country_code), player1_name)
     };
 
-    // Data for each row: (Label, Value)
-    let rows_data: [(Option<&'static str>, String); 11] = [
-        (None, "START MATCH  [ Press Space / Enter ]".to_string()),
-        (Some("Game Mode:"), game_mode.name().to_string()),
-        (Some("Player Profile:"), profile_display),
-        (Some("AI Difficulty:"), difficulty.name().to_string()),
-        (Some("Matchmaking Range:"), elo_range.name().to_string()),
-        (Some("Rules:"), rule_mode.name().to_string()),
-        (Some("Points to Win:"), format!("{}", score_to_win)),
-        (Some("Arena:"), arena.name().to_string()),
-        (Some("P1 Color:"), left_theme.name().to_string()),
-        (Some("P2 Color:"), right_theme.name().to_string()),
-        (Some("Fullscreen:"), if fullscreen { "ENABLED".to_string() } else { "DISABLED".to_string() }),
-    ];
-
     for layout in &layouts {
         let i = layout.index;
         let is_selected = i == selected_item;
-        let (label_opt, ref val) = rows_data[i];
+        let (label_opt, val) = match layout.item {
+            MenuItem::StartMatch => {
+                let action_text = match game_mode {
+                    GameMode::QuickMatch => "FIND ONLINE MATCH  [ Press Space / Enter ]",
+                    GameMode::HostOnline => "HOST ONLINE ROOM  [ Press Space / Enter ]",
+                    GameMode::JoinOnline => "JOIN ONLINE ROOM  [ Press Space / Enter ]",
+                    GameMode::ServerBrowser => "OPEN SERVER BROWSER  [ Press Space / Enter ]",
+                    GameMode::Leaderboard => "VIEW GLOBAL LEADERBOARDS  [ Press Space / Enter ]",
+                    _ => "START MATCH  [ Press Space / Enter ]",
+                };
+                (None, action_text.to_string())
+            }
+            MenuItem::GameMode => (Some("Game Mode:"), game_mode.name().to_string()),
+            MenuItem::PlayerProfile => (Some("Player Profile:"), profile_display.clone()),
+            MenuItem::AiDifficulty => (Some("AI Difficulty:"), difficulty.name().to_string()),
+            MenuItem::MatchmakingRange => (Some("Matchmaking Range:"), elo_range.name().to_string()),
+            MenuItem::Rules => (Some("Rules:"), rule_mode.name().to_string()),
+            MenuItem::PointsToWin => (Some("Points to Win:"), format!("{}", score_to_win)),
+            MenuItem::Arena => (Some("Arena:"), arena.name().to_string()),
+            MenuItem::P1Color => (Some("P1 Color:"), left_theme.name().to_string()),
+            MenuItem::P2Color => (Some("P2 Color:"), right_theme.name().to_string()),
+            MenuItem::Fullscreen => (Some("Fullscreen:"), if fullscreen { "ENABLED".to_string() } else { "DISABLED".to_string() }),
+        };
 
         // Draw row highlight if selected
         if is_selected {
@@ -291,12 +429,12 @@ pub fn render_main_menu(
             );
         }
 
-        let text_y = layout.row_rect.y + 22.0;
+        let text_y = layout.row_rect.y + layout.row_rect.h * 0.5 + 6.0;
 
         if let Some(label) = label_opt {
             // Setting Row: Label on left
             let label_col = if is_selected { WHITE } else { Color::new(0.8, 0.85, 0.92, 0.85) };
-            draw_text(label, card_x + 30.0, text_y, 19.0, label_col);
+            draw_text(label, card_x + 30.0, text_y, 18.0, label_col);
 
             // Left arrow button `<`
             if let Some(l_rect) = layout.left_arrow_rect {
@@ -338,7 +476,7 @@ pub fn render_main_menu(
 
             // Value text centered between the two arrow buttons
             if let (Some(l_rect), Some(r_rect)) = (layout.left_arrow_rect, layout.right_arrow_rect) {
-                let val_dim = measure_text(val, None, 18, 1.0);
+                let val_dim = measure_text(&val, None, 18, 1.0);
                 let center_x = (l_rect.x + l_rect.w + r_rect.x) * 0.5;
                 let val_x = center_x - val_dim.width * 0.5;
                 let val_col = if is_selected {
@@ -346,7 +484,7 @@ pub fn render_main_menu(
                 } else {
                     Color::new(0.85, 0.9, 1.0, 0.9)
                 };
-                draw_text(val, val_x, text_y, 18.0, val_col);
+                draw_text(&val, val_x, text_y, 18.0, val_col);
             }
         } else {
             // Action button (START MATCH)
@@ -355,9 +493,9 @@ pub fn render_main_menu(
             } else {
                 Color::new(0.3, 0.9, 1.0, 1.0)
             };
-            let dim = measure_text(val, None, 21, 1.0);
+            let dim = measure_text(&val, None, 21, 1.0);
             let tx = (VIRTUAL_WIDTH - dim.width) * 0.5;
-            draw_text(val, tx, text_y, 21.0, col);
+            draw_text(&val, tx, text_y, 21.0, col);
         }
     }
 

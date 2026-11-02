@@ -36,6 +36,7 @@ pub enum MatchEvent {
     BallHitWall { side: PlayerSide },
     BallHitNet { side: PlayerSide },
     BallHitNetTop,
+    BallCrossedNet { new_side: PlayerSide },
 }
 
 #[derive(Debug, Clone)]
@@ -135,6 +136,8 @@ pub struct PhysicWorld {
     pub blobs: [Blobby; 2],
     pub ball: Ball,
     pub events: Vec<MatchEvent>,
+    pub prev_ball_x: f32,
+    pub blob_collision_cooldown: [i32; 2],
 }
 
 impl PhysicWorld {
@@ -146,6 +149,8 @@ impl PhysicWorld {
             ],
             ball: Ball::new(200.0, STANDARD_BALL_HEIGHT),
             events: Vec::new(),
+            prev_ball_x: 200.0,
+            blob_collision_cooldown: [0, 0],
         }
     }
 
@@ -177,6 +182,8 @@ impl PhysicWorld {
             }
         }
         self.ball.vel = Vec2::ZERO;
+        self.prev_ball_x = self.ball.pos.x;
+        self.blob_collision_cooldown = [0, 0];
     }
 
     pub fn blob_hit_ground(&self, side: PlayerSide) -> bool {
@@ -257,6 +264,10 @@ impl PhysicWorld {
 
     fn handle_blobby_ball_collision(&mut self, side: PlayerSide) -> bool {
         let idx = side.index();
+        if self.blob_collision_cooldown[idx] > 0 {
+            return false;
+        }
+
         let mut collision_center = self.blobs[idx].pos;
 
         if self.player_bottom_ball_collision(side) {
@@ -284,6 +295,9 @@ impl PhysicWorld {
 
         // Ball impact squash on blob
         self.blobs[idx].squash_vel -= intensity * 1.5;
+
+        self.blob_collision_cooldown[idx] = 6;
+        self.blob_collision_cooldown[side.opponent().index()] = 0;
 
         self.events.push(MatchEvent::BallHitBlob {
             player: side,
@@ -386,6 +400,11 @@ impl PhysicWorld {
         is_ball_valid: bool,
         is_game_running: bool,
     ) {
+        self.blob_collision_cooldown[0] = (self.blob_collision_cooldown[0] - 1).max(0);
+        self.blob_collision_cooldown[1] = (self.blob_collision_cooldown[1] - 1).max(0);
+
+        let prev_x = self.ball.pos.x;
+
         // Blobby physical steps
         self.handle_blob(PlayerSide::Left, left_input);
         self.handle_blob(PlayerSide::Right, right_input);
@@ -404,6 +423,17 @@ impl PhysicWorld {
 
         // Ball world collisions (walls, net, ground)
         self.handle_ball_world_collisions();
+
+        // Check if ball crossed the net plane
+        let curr_x = self.ball.pos.x;
+        if prev_x < NET_POSITION_X && curr_x >= NET_POSITION_X {
+            self.events.push(MatchEvent::BallCrossedNet { new_side: PlayerSide::Right });
+            self.blob_collision_cooldown = [0, 0];
+        } else if prev_x > NET_POSITION_X && curr_x <= NET_POSITION_X {
+            self.events.push(MatchEvent::BallCrossedNet { new_side: PlayerSide::Left });
+            self.blob_collision_cooldown = [0, 0];
+        }
+        self.prev_ball_x = curr_x;
 
         // Blobby net constraints
         if self.blobs[0].pos.x + BLOBBY_LOWER_RADIUS > NET_POSITION_X - NET_RADIUS {
