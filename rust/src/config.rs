@@ -34,6 +34,10 @@ pub struct UserConfig {
     pub court_size: usize,       // Legacy discrete index
     #[serde(default)]
     pub court_width_factor: f32, // 0.0 = Standard (800px), 1.0 = Max (Window/Screen borders)
+    #[serde(default = "default_player_id")]
+    pub player_id: String,
+    #[serde(default = "default_volume")]
+    pub volume: f32,
 }
 
 impl UserConfig {
@@ -46,6 +50,19 @@ impl UserConfig {
 
 pub fn default_elo_range() -> usize {
     1 // Balanced (+/-100)
+}
+
+pub fn default_player_id() -> String {
+    let rand_id = quad_rand::rand();
+    let timestamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis() as u32;
+    format!("bv_{:08x}_{:08x}", timestamp, rand_id)
+}
+
+pub fn default_volume() -> f32 {
+    0.85
 }
 
 pub const AVAILABLE_COUNTRIES: &[(&str, &str)] = &[
@@ -415,10 +432,10 @@ impl EloSearchRange {
 
 impl Default for UserConfig {
     fn default() -> Self {
-        // Detect default username from environment or fallback to "gratis01"
+        // Detect default username from environment or fallback to "Player 1"
         let p1_default = std::env::var("USER")
             .or_else(|_| std::env::var("USERNAME"))
-            .unwrap_or_else(|_| "gratis01".to_string());
+            .unwrap_or_else(|_| "Player 1".to_string());
 
         Self {
             player1_name: p1_default,
@@ -440,6 +457,8 @@ impl Default for UserConfig {
             high_ball_camera: 0, // Off-Screen Indicator by default
             court_size: 0,       // Standard (800px) by default
             court_width_factor: 0.0, // Standard (800px) by default
+            player_id: default_player_id(),
+            volume: default_volume(),
         }
     }
 }
@@ -567,7 +586,16 @@ impl UserConfig {
     pub fn load() -> Self {
         let path = Self::config_path();
         if let Ok(data) = fs::read_to_string(&path) {
-            if let Ok(cfg) = serde_json::from_str::<UserConfig>(&data) {
+            if let Ok(mut cfg) = serde_json::from_str::<UserConfig>(&data) {
+                if cfg.volume.is_nan() {
+                    cfg.volume = default_volume();
+                } else {
+                    cfg.volume = cfg.volume.clamp(0.0, 1.0);
+                }
+                if cfg.player_id.is_empty() {
+                    cfg.player_id = default_player_id();
+                    cfg.save();
+                }
                 return cfg;
             }
         }
@@ -579,6 +607,35 @@ impl UserConfig {
         if let Ok(data) = serde_json::to_string_pretty(self) {
             let _ = fs::write(path, data);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_config_defaults_and_serde_fields() {
+        let cfg = UserConfig::default();
+        assert!(cfg.player_id.starts_with("bv_"));
+        assert!((cfg.volume - 0.85).abs() < 1e-6);
+
+        // Legacy JSON missing player_id and volume should populate defaults
+        let legacy_json = r#"{
+            "player1_name": "Alice",
+            "player2_name": "Bob",
+            "fullscreen": false,
+            "sound_muted": false,
+            "score_to_win": 15,
+            "arena_index": 0,
+            "difficulty_index": 2,
+            "rule_mode_index": 0,
+            "left_theme_index": 0,
+            "right_theme_index": 1
+        }"#;
+        let parsed: UserConfig = serde_json::from_str(legacy_json).unwrap();
+        assert!(parsed.player_id.starts_with("bv_"));
+        assert!((parsed.volume - 0.85).abs() < 1e-6);
     }
 }
 

@@ -25,6 +25,7 @@ cp packaging/blobby.desktop "$PORTABLE_DIR/"
 cp packaging/blobby.png "$PORTABLE_DIR/"
 cp README.md "$PORTABLE_DIR/"
 cp COPYING "$PORTABLE_DIR/"
+cp THIRD_PARTY_LICENSES.md "$PORTABLE_DIR/"
 
 tar -czf "$DIST_DIR/blobby-volley-3-v$VERSION-linux-x86_64.tar.gz" -C /tmp "blobby-volley-3-v$VERSION-linux-x86_64"
 echo "Created: $DIST_DIR/blobby-volley-3-v$VERSION-linux-x86_64.tar.gz"
@@ -45,8 +46,8 @@ Version: $VERSION
 Section: games
 Priority: optional
 Architecture: amd64
-Maintainer: gratis01 <gratis01@local>
-Description: Blobby Volley 3 - Remastered 2026 Edition in Rust
+Maintainer: Lakis01 <https://github.com/Lakis01/BlobbyVolley3>
+Description: Blobby Volley 3 - Unofficial Rust rewrite and remaster of Blobby Volley 2
  A modern, high-performance port and complete visual remaster of the
  legendary Blobby Volley head-to-head multiplayer volleyball game.
 EOF
@@ -57,6 +58,7 @@ cp packaging/blobby.desktop "$DEB_BUILD/usr/share/applications/"
 cp packaging/blobby.png "$DEB_BUILD/usr/share/pixmaps/"
 cp README.md "$DEB_BUILD/usr/share/doc/blobby-volley-3/"
 cp COPYING "$DEB_BUILD/usr/share/doc/blobby-volley-3/copyright"
+cp THIRD_PARTY_LICENSES.md "$DEB_BUILD/usr/share/doc/blobby-volley-3/"
 
 # Create deb using ar
 cd "$DEB_BUILD"

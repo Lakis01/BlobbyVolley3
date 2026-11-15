@@ -57,11 +57,12 @@ jobs:
       - name: Package Windows Bundle
         shell: pwsh
         run: |
-          $tag = if ($env:GITHUB_REF_NAME) { $env:GITHUB_REF_NAME } else { "v3.2.0" }
+          $tag = if ($env:GITHUB_REF_NAME) { $env:GITHUB_REF_NAME } else { "v3.4.0" }
           New-Item -ItemType Directory -Force -Path "dist-win/blobby-volley-3-windows-x64"
           Copy-Item "target/release/blobby.exe" -Destination "dist-win/blobby-volley-3-windows-x64/"
           Copy-Item "README.md" -Destination "dist-win/blobby-volley-3-windows-x64/"
           Copy-Item "COPYING" -Destination "dist-win/blobby-volley-3-windows-x64/LICENSE.txt"
+          Copy-Item "THIRD_PARTY_LICENSES.md" -Destination "dist-win/blobby-volley-3-windows-x64/"
           Compress-Archive -Path "dist-win/blobby-volley-3-windows-x64/*" -DestinationPath "dist-win/blobby-volley-3-$tag-windows-x64.zip"
 
       - name: Upload Windows Release Asset
@@ -91,11 +92,12 @@ jobs:
 
       - name: Create Universal Binary
         run: |
-          TAG="${GITHUB_REF_NAME:-v3.2.0}"
+          TAG="${GITHUB_REF_NAME:-v3.4.0}"
           mkdir -p dist-mac
           lipo -create -output dist-mac/blobby target/x86_64-apple-darwin/release/blobby target/aarch64-apple-darwin/release/blobby
           chmod +x dist-mac/blobby
-          tar -czf "dist-mac/blobby-volley-3-${TAG}-macos-universal.tar.gz" -C dist-mac blobby
+          cp README.md COPYING THIRD_PARTY_LICENSES.md dist-mac/
+          tar -czf "dist-mac/blobby-volley-3-${TAG}-macos-universal.tar.gz" -C dist-mac blobby README.md COPYING THIRD_PARTY_LICENSES.md
 
       - name: Upload macOS Release Asset
         uses: softprops/action-gh-release@v2

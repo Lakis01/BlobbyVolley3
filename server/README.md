@@ -1,6 +1,8 @@
 # Blobby Volley 3 - Zero-Cost Serverless Matchmaking Registry
 
-This directory contains a ready-to-deploy **Cloudflare Worker** that provides free global room discovery and matchmaking for **Blobby Volley 3 (Remastered)**.
+This directory contains a ready-to-deploy **Cloudflare Worker** that provides free global room discovery and matchmaking for **Blobby Volley 3**.
+
+The worker (`worker.js`) is dual-licensed under **`MIT OR Apache-2.0`**.
 
 ---
 

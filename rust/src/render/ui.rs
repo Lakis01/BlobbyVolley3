@@ -1,4 +1,4 @@
-// Blobby Volley 3 - 2026 Remastered Glassmorphism HUD, Menus, Profile Setup, Online Lobby & Chat UI
+// Blobby Volley 3 - Glassmorphism HUD, Menus, Profile Setup, Online Lobby & Chat UI
 use macroquad::prelude::*;
 use crate::physics::PlayerSide;
 use crate::rules::{GameLogic, RuleMode};
@@ -72,6 +72,7 @@ pub enum MenuItem {
     P1Color,
     P2Color,
     HighBallCamera,
+    Volume,
     Fullscreen,
 }
 
@@ -88,6 +89,7 @@ pub fn get_menu_items_for_mode(mode: GameMode) -> Vec<MenuItem> {
             MenuItem::Arena,
             MenuItem::P1Color,
             MenuItem::HighBallCamera,
+            MenuItem::Volume,
             MenuItem::Fullscreen,
         ],
         GameMode::TwoPlayerLocal => vec![
@@ -101,6 +103,7 @@ pub fn get_menu_items_for_mode(mode: GameMode) -> Vec<MenuItem> {
             MenuItem::P1Color,
             MenuItem::P2Color,
             MenuItem::HighBallCamera,
+            MenuItem::Volume,
             MenuItem::Fullscreen,
         ],
         GameMode::QuickMatch => vec![
@@ -111,6 +114,7 @@ pub fn get_menu_items_for_mode(mode: GameMode) -> Vec<MenuItem> {
             MenuItem::Arena,
             MenuItem::P1Color,
             MenuItem::HighBallCamera,
+            MenuItem::Volume,
             MenuItem::Fullscreen,
         ],
         GameMode::BotVsBot => vec![
@@ -124,6 +128,7 @@ pub fn get_menu_items_for_mode(mode: GameMode) -> Vec<MenuItem> {
             MenuItem::P1Color,
             MenuItem::P2Color,
             MenuItem::HighBallCamera,
+            MenuItem::Volume,
             MenuItem::Fullscreen,
         ],
         GameMode::HostOnline => vec![
@@ -135,6 +140,7 @@ pub fn get_menu_items_for_mode(mode: GameMode) -> Vec<MenuItem> {
             MenuItem::Arena,
             MenuItem::P1Color,
             MenuItem::HighBallCamera,
+            MenuItem::Volume,
             MenuItem::Fullscreen,
         ],
         GameMode::JoinOnline | GameMode::ServerBrowser => vec![
@@ -142,6 +148,7 @@ pub fn get_menu_items_for_mode(mode: GameMode) -> Vec<MenuItem> {
             MenuItem::GameMode,
             MenuItem::PlayerProfile,
             MenuItem::HighBallCamera,
+            MenuItem::Volume,
             MenuItem::Fullscreen,
         ],
     }
@@ -182,7 +189,7 @@ pub fn get_main_menu_layout(items: &[MenuItem]) -> Vec<MenuRowLayout> {
                 right_arrow_rect: None,
                 slider_rect: None,
             });
-        } else if item == MenuItem::CourtSize {
+        } else if item == MenuItem::CourtSize || item == MenuItem::Volume {
             // Schieberegler (Slider) row with left/right fine-tuning buttons and central slider track
             let btn_size = 24.0;
             let left_btn = Rect::new(card_x + card_w - 270.0, y - btn_size * 0.5, btn_size, btn_size);
@@ -384,6 +391,7 @@ pub fn render_hud(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn render_main_menu(
     game_mode: GameMode,
     items: &[MenuItem],
@@ -399,6 +407,8 @@ pub fn render_main_menu(
     left_theme: BlobTheme,
     right_theme: BlobTheme,
     high_ball_camera: usize,
+    sound_volume: f32,
+    is_muted: bool,
     fullscreen: bool,
     selected_item: usize,
     virt_mouse: Option<Vec2>,
@@ -414,7 +424,7 @@ pub fn render_main_menu(
     let dim_alpha = if is_sizing_court { 0.28 } else { 0.72 };
     draw_rectangle(ui_cam_x0, 0.0, ui_cam_w, VIRTUAL_HEIGHT, Color::new(0.04, 0.05, 0.1, dim_alpha));
 
-    // Glowing 2026 Title
+    // Glowing Title
     let title = "BLOBBY VOLLEY 3";
     let title_dim = measure_text(title, None, 50, 1.0);
     let tx = (VIRTUAL_WIDTH - title_dim.width) * 0.5;
@@ -424,7 +434,7 @@ pub fn render_main_menu(
     draw_text(title, tx + 2.0, ty + 2.0, 50.0, Color::new(0.0, 0.0, 0.0, 0.6));
     draw_text(title, tx, ty, 50.0, Color::new(0.15, 0.85, 1.0, 1.0));
 
-    let subtitle = "REMASTERED - 2026 EDITION";
+    let subtitle = "UNOFFICIAL RUST REWRITE & REMASTER";
     let sub_dim = measure_text(subtitle, None, 16, 1.0);
     draw_text(
         subtitle,
@@ -496,6 +506,7 @@ pub fn render_main_menu(
             MenuItem::P1Color => (Some("P1 Color:"), left_theme.name().to_string()),
             MenuItem::P2Color => (Some("P2 Color:"), right_theme.name().to_string()),
             MenuItem::HighBallCamera => (Some("High Ball Cam:"), crate::config::HighBallCamera::from_index(high_ball_camera).name().to_string()),
+            MenuItem::Volume => (Some("Sound Volume:"), String::new()),
             MenuItem::Fullscreen => (Some("Fullscreen:"), if fullscreen { "ENABLED".to_string() } else { "DISABLED".to_string() }),
         };
 
@@ -528,7 +539,7 @@ pub fn render_main_menu(
 
             // Left arrow button `<`
             if let Some(l_rect) = layout.left_arrow_rect {
-                let is_hovered = virt_mouse.map_or(false, |m| l_rect.contains(m));
+                let is_hovered = virt_mouse.is_some_and(|m| l_rect.contains(m));
                 let bg_col = if is_hovered {
                     Color::new(0.2, 0.7, 1.0, 0.6)
                 } else {
@@ -547,7 +558,7 @@ pub fn render_main_menu(
 
             // Right arrow button `>`
             if let Some(r_rect) = layout.right_arrow_rect {
-                let is_hovered = virt_mouse.map_or(false, |m| r_rect.contains(m));
+                let is_hovered = virt_mouse.is_some_and(|m| r_rect.contains(m));
                 let bg_col = if is_hovered {
                     Color::new(0.2, 0.7, 1.0, 0.6)
                 } else {
@@ -572,21 +583,68 @@ pub fn render_main_menu(
                 let track_x = s_rect.x;
                 let track_w = s_rect.w;
 
+                let (val_str, val_col, fill_factor, fill_col, thumb_col, glow_col) =
+                    if layout.item == MenuItem::Volume {
+                        let vol = sound_volume.clamp(0.0, 1.0);
+                        let s = if is_muted {
+                            "MUTED [M]".to_string()
+                        } else {
+                            format!("{:.0}%", (vol * 100.0).round())
+                        };
+                        let v_col = if is_muted {
+                            Color::new(1.0, 0.6, 0.25, 0.92)
+                        } else if is_selected {
+                            Color::new(1.0, 0.95, 0.4, 1.0)
+                        } else {
+                            Color::new(0.85, 0.9, 1.0, 0.9)
+                        };
+                        let f_col = if is_muted {
+                            Color::new(0.85, 0.45, 0.2, 0.6)
+                        } else {
+                            Color::new(0.2, 0.85, 1.0, 0.9)
+                        };
+                        let t_col = if is_muted {
+                            Color::new(0.95, 0.55, 0.25, 0.9)
+                        } else {
+                            Color::new(1.0, 0.95, 0.35, 1.0)
+                        };
+                        let g_col = if is_muted {
+                            Color::new(0.9, 0.45, 0.2, 0.28)
+                        } else {
+                            Color::new(0.2, 0.85, 1.0, 0.35)
+                        };
+                        (s, v_col, vol, f_col, t_col, g_col)
+                    } else {
+                        let s = if court_width_factor <= 0.01 {
+                            "800px (Default)".to_string()
+                        } else if court_width_factor >= 0.99 {
+                            format!("{:.0}px (Window Border)", current_court_width)
+                        } else {
+                            format!("{:.0}px", current_court_width)
+                        };
+                        let v_col = if is_selected {
+                            Color::new(1.0, 0.95, 0.4, 1.0)
+                        } else {
+                            Color::new(0.85, 0.9, 1.0, 0.9)
+                        };
+                        (
+                            s,
+                            v_col,
+                            court_width_factor.clamp(0.0, 1.0),
+                            Color::new(0.2, 0.85, 1.0, 0.9),
+                            Color::new(1.0, 0.95, 0.35, 1.0),
+                            Color::new(0.2, 0.85, 1.0, 0.35),
+                        )
+                    };
+
                 // Value readout centered above slider track
-                let val_str = if court_width_factor <= 0.01 {
-                    "800px (Default)".to_string()
-                } else if court_width_factor >= 0.99 {
-                    format!("{:.0}px (Window Border)", current_court_width)
-                } else {
-                    format!("{:.0}px", current_court_width)
-                };
                 let val_dim = measure_text(&val_str, None, 13, 1.0);
                 draw_text(
                     &val_str,
                     track_x + (track_w - val_dim.width) * 0.5,
                     s_rect.y + 4.0,
                     13.0,
-                    if is_selected { Color::new(1.0, 0.95, 0.4, 1.0) } else { Color::new(0.85, 0.9, 1.0, 0.9) },
+                    val_col,
                 );
 
                 // Track Slot Background
@@ -594,19 +652,19 @@ pub fn render_main_menu(
                 draw_rectangle_lines(track_x, bar_y, track_w, bar_h, 1.0, Color::new(0.25, 0.4, 0.6, 0.7));
 
                 // Illuminated Active Progress Bar
-                let fill_w = track_w * court_width_factor.clamp(0.0, 1.0);
+                let fill_w = track_w * fill_factor;
                 if fill_w > 0.0 {
-                    draw_rectangle(track_x, bar_y, fill_w, bar_h, Color::new(0.2, 0.85, 1.0, 0.9));
+                    draw_rectangle(track_x, bar_y, fill_w, bar_h, fill_col);
                 }
 
                 // Slider Thumb Knob (Schieberegler handle)
                 let thumb_x = track_x + fill_w;
                 let thumb_y = bar_y + bar_h * 0.5;
-                let is_track_hovered = virt_mouse.map_or(false, |m| s_rect.contains(m));
+                let is_track_hovered = virt_mouse.is_some_and(|m| s_rect.contains(m));
                 let thumb_rad = if is_track_hovered { 8.5 } else { 7.0 };
 
-                draw_circle(thumb_x, thumb_y, thumb_rad + 3.0, Color::new(0.2, 0.85, 1.0, 0.35));
-                draw_circle(thumb_x, thumb_y, thumb_rad, Color::new(1.0, 0.95, 0.35, 1.0));
+                draw_circle(thumb_x, thumb_y, thumb_rad + 3.0, glow_col);
+                draw_circle(thumb_x, thumb_y, thumb_rad, thumb_col);
                 draw_circle_lines(thumb_x, thumb_y, thumb_rad, 1.2, WHITE);
             } else if let (Some(l_rect), Some(r_rect)) = (layout.left_arrow_rect, layout.right_arrow_rect) {
                 // Value text centered between the two arrow buttons for normal dropdown rows
@@ -813,6 +871,55 @@ pub fn draw_mini_flag(code: &str, x: f32, y: f32, w: f32, h: f32) {
     draw_rectangle_lines(x, y, w, h, 1.0, Color::new(0.3, 0.45, 0.65, 0.7));
 }
 
+#[derive(Debug, Clone, Copy)]
+pub struct PlayerSetupLayout {
+    pub p1_rect: Rect,
+    pub p2_rect: Option<Rect>,
+    pub country_rect: Rect,
+    pub country_left_arrow: Rect,
+    pub country_right_arrow: Rect,
+    pub confirm_btn: Rect,
+    pub cancel_btn: Rect,
+}
+
+pub fn get_player_setup_rects(is_two_player: bool) -> PlayerSetupLayout {
+    let card_w = 560.0;
+    let card_h = if is_two_player { 420.0 } else { 355.0 };
+    let card_x = (VIRTUAL_WIDTH - card_w) * 0.5;
+    let card_y = (VIRTUAL_HEIGHT - card_h) * 0.5;
+
+    let f0_y = card_y + 106.0;
+    let p1_rect = Rect::new(card_x + 40.0, f0_y, card_w - 80.0, 36.0);
+    let mut next_y = f0_y + 66.0;
+
+    let p2_rect = if is_two_player {
+        let r = Rect::new(card_x + 40.0, next_y, card_w - 80.0, 36.0);
+        next_y += 66.0;
+        Some(r)
+    } else {
+        None
+    };
+
+    let country_rect = Rect::new(card_x + 40.0, next_y, card_w - 80.0, 36.0);
+    let country_left_arrow = Rect::new(country_rect.x + 52.0, country_rect.y + 4.0, 28.0, 28.0);
+    let country_right_arrow = Rect::new(country_rect.x + country_rect.w - 36.0, country_rect.y + 4.0, 28.0, 28.0);
+
+    let btn_y = card_y + card_h - 80.0;
+    let confirm_btn = Rect::new(card_x + 40.0, btn_y, 260.0, 38.0);
+    let cancel_btn = Rect::new(card_x + card_w - 40.0 - 180.0, btn_y, 180.0, 38.0);
+
+    PlayerSetupLayout {
+        p1_rect,
+        p2_rect,
+        country_rect,
+        country_left_arrow,
+        country_right_arrow,
+        confirm_btn,
+        cancel_btn,
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
 pub fn render_player_setup(
     p1_name: &str,
     country_code: &str,
@@ -820,14 +927,16 @@ pub fn render_player_setup(
     is_two_player: bool,
     active_field: usize,
     search_query: &str,
+    virt_mouse: Option<Vec2>,
     time: f32,
 ) {
     draw_rectangle(0.0, 0.0, VIRTUAL_WIDTH, VIRTUAL_HEIGHT, Color::new(0.04, 0.05, 0.1, 0.85));
 
     let card_w = 560.0;
-    let card_h = if is_two_player { 390.0 } else { 330.0 };
+    let card_h = if is_two_player { 420.0 } else { 355.0 };
     let card_x = (VIRTUAL_WIDTH - card_w) * 0.5;
     let card_y = (VIRTUAL_HEIGHT - card_h) * 0.5;
+    let layout = get_player_setup_rects(is_two_player);
 
     draw_rectangle(card_x, card_y, card_w, card_h, Color::new(0.08, 0.1, 0.18, 0.95));
     draw_rectangle_lines(card_x, card_y, card_w, card_h, 2.0, Color::new(0.2, 0.85, 1.0, 0.8));
@@ -843,71 +952,202 @@ pub fn render_player_setup(
     let cursor = if (time * 3.5) as i32 % 2 == 0 { "_" } else { "" };
 
     // Field 0: Player 1 Name
-    let f0_y = card_y + 110.0;
-    draw_text("Player 1 Name:", card_x + 40.0, f0_y - 8.0, 17.0, WHITE);
-    let box0_rect = Rect::new(card_x + 40.0, f0_y, card_w - 80.0, 36.0);
+    let box0_rect = layout.p1_rect;
+    draw_text("Player 1 Name:", box0_rect.x, box0_rect.y - 8.0, 17.0, WHITE);
+    let p1_hov = virt_mouse.is_some_and(|m| box0_rect.contains(m));
     draw_rectangle(box0_rect.x, box0_rect.y, box0_rect.w, box0_rect.h, Color::new(0.05, 0.08, 0.14, 0.95));
-    let f0_border = if active_field == 0 { Color::new(0.2, 0.9, 1.0, 1.0) } else { Color::new(0.3, 0.45, 0.65, 0.6) };
+    let f0_border = if active_field == 0 {
+        Color::new(0.2, 0.9, 1.0, 1.0)
+    } else if p1_hov {
+        Color::new(0.3, 0.7, 0.95, 0.85)
+    } else {
+        Color::new(0.3, 0.45, 0.65, 0.6)
+    };
     draw_rectangle_lines(box0_rect.x, box0_rect.y, box0_rect.w, box0_rect.h, 1.5, f0_border);
     let f0_text = if active_field == 0 { format!("{}{}", p1_name, cursor) } else { p1_name.to_string() };
     draw_text(&f0_text, box0_rect.x + 12.0, box0_rect.y + 25.0, 20.0, Color::new(1.0, 0.95, 0.35, 1.0));
 
-    let mut next_y = f0_y + 68.0;
-
     // Field 1: Player 2 Name (only if 2-player mode)
-    if is_two_player {
-        let f1_y = next_y;
-        draw_text("Player 2 Name:", card_x + 40.0, f1_y - 8.0, 17.0, WHITE);
-        let box1_rect = Rect::new(card_x + 40.0, f1_y, card_w - 80.0, 36.0);
+    if let Some(box1_rect) = layout.p2_rect {
+        draw_text("Player 2 Name:", box1_rect.x, box1_rect.y - 8.0, 17.0, WHITE);
+        let p2_hov = virt_mouse.is_some_and(|m| box1_rect.contains(m));
         draw_rectangle(box1_rect.x, box1_rect.y, box1_rect.w, box1_rect.h, Color::new(0.05, 0.08, 0.14, 0.95));
-        let f1_border = if active_field == 1 { Color::new(0.2, 0.9, 1.0, 1.0) } else { Color::new(0.3, 0.45, 0.65, 0.6) };
+        let f1_border = if active_field == 1 {
+            Color::new(0.2, 0.9, 1.0, 1.0)
+        } else if p2_hov {
+            Color::new(0.3, 0.7, 0.95, 0.85)
+        } else {
+            Color::new(0.3, 0.45, 0.65, 0.6)
+        };
         draw_rectangle_lines(box1_rect.x, box1_rect.y, box1_rect.w, box1_rect.h, 1.5, f1_border);
         let f1_text = if active_field == 1 { format!("{}{}", p2_name, cursor) } else { p2_name.to_string() };
         draw_text(&f1_text, box1_rect.x + 12.0, box1_rect.y + 25.0, 20.0, Color::new(1.0, 0.95, 0.35, 1.0));
-        next_y += 68.0;
     }
 
     // Country / Flag Field
     let country_field_idx = if is_two_player { 2 } else { 1 };
-    let fc_y = next_y;
-    draw_text("Country / Flag Badge (Optional):", card_x + 40.0, fc_y - 8.0, 17.0, WHITE);
+    let boxc_rect = layout.country_rect;
+    draw_text("Country / Flag Badge (Optional):", boxc_rect.x, boxc_rect.y - 8.0, 17.0, WHITE);
 
     // Live search query badge if active
     if active_field == country_field_idx && !search_query.is_empty() {
         let q_str = format!("Jump to: \"{}\"", search_query);
         let q_dim = measure_text(&q_str, None, 14, 1.0);
-        draw_text(&q_str, card_x + card_w - 40.0 - q_dim.width, fc_y - 8.0, 14.0, Color::new(1.0, 0.9, 0.35, 1.0));
+        draw_text(&q_str, card_x + card_w - 40.0 - q_dim.width, boxc_rect.y - 8.0, 14.0, Color::new(1.0, 0.9, 0.35, 1.0));
     }
 
-    let boxc_rect = Rect::new(card_x + 40.0, fc_y, card_w - 80.0, 36.0);
+    let c_hov = virt_mouse.is_some_and(|m| boxc_rect.contains(m));
     draw_rectangle(boxc_rect.x, boxc_rect.y, boxc_rect.w, boxc_rect.h, Color::new(0.05, 0.08, 0.14, 0.95));
-    let fc_border = if active_field == country_field_idx { Color::new(0.2, 0.9, 1.0, 1.0) } else { Color::new(0.3, 0.45, 0.65, 0.6) };
+    let fc_border = if active_field == country_field_idx {
+        Color::new(0.2, 0.9, 1.0, 1.0)
+    } else if c_hov {
+        Color::new(0.3, 0.7, 0.95, 0.85)
+    } else {
+        Color::new(0.3, 0.45, 0.65, 0.6)
+    };
     draw_rectangle_lines(boxc_rect.x, boxc_rect.y, boxc_rect.w, boxc_rect.h, 1.5, fc_border);
 
     // Mini Flag on the left of the field
     draw_mini_flag(country_code, boxc_rect.x + 10.0, boxc_rect.y + 7.0, 32.0, 22.0);
 
-    let display_str = format!("<  {}  >", country_display(country_code));
-    let display_dim = measure_text(&display_str, None, 18, 1.0);
+    // Clickable `<` and `>` buttons inside country box
+    let l_rect = layout.country_left_arrow;
+    let l_hov = virt_mouse.is_some_and(|m| l_rect.contains(m));
+    draw_rectangle(
+        l_rect.x,
+        l_rect.y,
+        l_rect.w,
+        l_rect.h,
+        if l_hov { Color::new(0.2, 0.7, 1.0, 0.6) } else { Color::new(0.12, 0.2, 0.32, 0.75) },
+    );
+    draw_rectangle_lines(
+        l_rect.x,
+        l_rect.y,
+        l_rect.w,
+        l_rect.h,
+        1.0,
+        if l_hov { Color::new(0.4, 0.95, 1.0, 1.0) } else { Color::new(0.3, 0.6, 0.9, 0.6) },
+    );
+    draw_text("<", l_rect.x + 9.0, l_rect.y + 20.0, 20.0, if l_hov { WHITE } else { Color::new(0.3, 0.9, 1.0, 0.95) });
+
+    let r_rect = layout.country_right_arrow;
+    let r_hov = virt_mouse.is_some_and(|m| r_rect.contains(m));
+    draw_rectangle(
+        r_rect.x,
+        r_rect.y,
+        r_rect.w,
+        r_rect.h,
+        if r_hov { Color::new(0.2, 0.7, 1.0, 0.6) } else { Color::new(0.12, 0.2, 0.32, 0.75) },
+    );
+    draw_rectangle_lines(
+        r_rect.x,
+        r_rect.y,
+        r_rect.w,
+        r_rect.h,
+        1.0,
+        if r_hov { Color::new(0.4, 0.95, 1.0, 1.0) } else { Color::new(0.3, 0.6, 0.9, 0.6) },
+    );
+    draw_text(">", r_rect.x + 9.0, r_rect.y + 20.0, 20.0, if r_hov { WHITE } else { Color::new(0.3, 0.9, 1.0, 0.95) });
+
+    let display_str = country_display(country_code);
+    let display_dim = measure_text(display_str, None, 18, 1.0);
+    let text_center_x = (l_rect.x + l_rect.w + r_rect.x) * 0.5;
     draw_text(
-        &display_str,
-        boxc_rect.x + (boxc_rect.w - display_dim.width) * 0.5,
-        boxc_rect.y + 25.0,
+        display_str,
+        text_center_x - display_dim.width * 0.5,
+        boxc_rect.y + 24.0,
         18.0,
-        Color::new(0.3, 0.9, 1.0, 1.0),
+        Color::new(0.3, 0.95, 1.0, 1.0),
     );
 
-    // Confirm Prompt
-    let btn_y = card_y + card_h - 32.0;
-    let hint = "Type letters to jump (e.g. 'GER') | Left / Right: Cycle | Tab: Next | Enter: Confirm";
+    // Clickable Confirm & Cancel Buttons
+    let confirm_hov = virt_mouse.is_some_and(|m| layout.confirm_btn.contains(m));
+    draw_rectangle(
+        layout.confirm_btn.x,
+        layout.confirm_btn.y,
+        layout.confirm_btn.w,
+        layout.confirm_btn.h,
+        if confirm_hov { Color::new(0.15, 0.55, 0.85, 0.9) } else { Color::new(0.1, 0.36, 0.6, 0.85) },
+    );
+    draw_rectangle_lines(
+        layout.confirm_btn.x,
+        layout.confirm_btn.y,
+        layout.confirm_btn.w,
+        layout.confirm_btn.h,
+        1.5,
+        if confirm_hov { Color::new(0.4, 0.98, 1.0, 1.0) } else { Color::new(0.25, 0.85, 1.0, 0.85) },
+    );
+    let c_lbl = "CONFIRM & PLAY [Enter]";
+    let c_dim = measure_text(c_lbl, None, 16, 1.0);
+    draw_text(
+        c_lbl,
+        layout.confirm_btn.x + (layout.confirm_btn.w - c_dim.width) * 0.5,
+        layout.confirm_btn.y + 24.0,
+        16.0,
+        WHITE,
+    );
+
+    let cancel_hov = virt_mouse.is_some_and(|m| layout.cancel_btn.contains(m));
+    draw_rectangle(
+        layout.cancel_btn.x,
+        layout.cancel_btn.y,
+        layout.cancel_btn.w,
+        layout.cancel_btn.h,
+        if cancel_hov { Color::new(0.35, 0.18, 0.22, 0.9) } else { Color::new(0.14, 0.16, 0.24, 0.85) },
+    );
+    draw_rectangle_lines(
+        layout.cancel_btn.x,
+        layout.cancel_btn.y,
+        layout.cancel_btn.w,
+        layout.cancel_btn.h,
+        1.5,
+        if cancel_hov { Color::new(1.0, 0.55, 0.55, 1.0) } else { Color::new(0.45, 0.55, 0.7, 0.7) },
+    );
+    let b_lbl = "BACK [Esc]";
+    let b_dim = measure_text(b_lbl, None, 16, 1.0);
+    draw_text(
+        b_lbl,
+        layout.cancel_btn.x + (layout.cancel_btn.w - b_dim.width) * 0.5,
+        layout.cancel_btn.y + 24.0,
+        16.0,
+        Color::new(0.9, 0.92, 0.98, 0.95),
+    );
+
+    // Hint Prompt
+    let hint_y = card_y + card_h - 18.0;
+    let hint = "Type letters to jump (e.g. 'GER') | Left/Right: Cycle | Tab: Next Field";
     let hint_dim = measure_text(hint, None, 13, 1.0);
-    draw_text(hint, (VIRTUAL_WIDTH - hint_dim.width) * 0.5, btn_y, 13.0, Color::new(0.3, 0.95, 1.0, 0.9));
+    draw_text(hint, (VIRTUAL_WIDTH - hint_dim.width) * 0.5, hint_y, 13.0, Color::new(0.65, 0.85, 0.95, 0.85));
+}
+
+pub fn get_server_browser_rects(num_servers: usize) -> (Vec<Rect>, Rect, Rect) {
+    let card_w = 680.0;
+    let card_h = 440.0;
+    let card_x = (VIRTUAL_WIDTH - card_w) * 0.5;
+    let card_y = (VIRTUAL_HEIGHT - card_h) * 0.5;
+
+    let table_y = card_y + 100.0;
+    let row_h = 34.0;
+    let list_start_y = table_y + 18.0;
+
+    let mut row_rects = Vec::new();
+    for i in 0..num_servers.min(7) {
+        let y = list_start_y + i as f32 * row_h;
+        row_rects.push(Rect::new(card_x + 20.0, y - 16.0, card_w - 40.0, 30.0));
+    }
+
+    let btn_y = card_y + card_h - 46.0;
+    let refresh_btn_rect = Rect::new(card_x + 150.0, btn_y, 175.0, 30.0);
+    let back_btn_rect = Rect::new(card_x + card_w - 150.0 - 175.0, btn_y, 175.0, 30.0);
+
+    (row_rects, refresh_btn_rect, back_btn_rect)
 }
 
 pub fn render_server_browser(
     servers: &[ServerEntry],
     selected_idx: usize,
     is_refreshing: bool,
+    virt_mouse: Option<Vec2>,
     time: f32,
 ) {
     draw_rectangle(0.0, 0.0, VIRTUAL_WIDTH, VIRTUAL_HEIGHT, Color::new(0.04, 0.05, 0.1, 0.88));
@@ -924,7 +1164,7 @@ pub fn render_server_browser(
     let title_dim = measure_text(title, None, 28, 1.0);
     draw_text(title, (VIRTUAL_WIDTH - title_dim.width) * 0.5, card_y + 42.0, 28.0, Color::new(0.3, 0.9, 1.0, 1.0));
 
-    let subtitle = "Official Blobby Volley 2 Network & Remastered Community Rooms";
+    let subtitle = "LAN Auto-Discovery & Serverless P2P Rooms";
     let sub_dim = measure_text(subtitle, None, 14, 1.0);
     draw_text(subtitle, (VIRTUAL_WIDTH - sub_dim.width) * 0.5, card_y + 66.0, 14.0, Color::new(0.8, 0.85, 0.95, 0.8));
 
@@ -937,20 +1177,30 @@ pub fn render_server_browser(
 
     let row_h = 34.0;
     let list_start_y = table_y + 18.0;
+    let (row_rects, refresh_rect, back_rect) = get_server_browser_rects(servers.len());
 
-    if servers.is_empty() {
-        let msg = if is_refreshing { "Refreshing master server list..." } else { "No servers found. Press R to refresh." };
+    if is_refreshing && servers.is_empty() {
+        let msg = "Refreshing master server list...";
+        let msg_dim = measure_text(msg, None, 18, 1.0);
+        draw_text(msg, (VIRTUAL_WIDTH - msg_dim.width) * 0.5, list_start_y + 60.0, 18.0, Color::new(1.0, 0.85, 0.3, 1.0));
+    } else if servers.is_empty() {
+        let msg = "No servers found. Press R or click Refresh.";
         let msg_dim = measure_text(msg, None, 18, 1.0);
         draw_text(msg, (VIRTUAL_WIDTH - msg_dim.width) * 0.5, list_start_y + 60.0, 18.0, Color::new(1.0, 0.85, 0.3, 1.0));
     } else {
         for (i, server) in servers.iter().enumerate().take(7) {
             let y = list_start_y + i as f32 * row_h;
+            let row_rect = row_rects[i];
             let is_sel = i == selected_idx;
+            let is_hov = virt_mouse.is_some_and(|m| row_rect.contains(m));
 
             if is_sel {
                 let pulse = (time * 5.0).sin().abs() * 0.15 + 0.85;
-                draw_rectangle(card_x + 20.0, y - 16.0, card_w - 40.0, 30.0, Color::new(0.18, 0.45, 0.85, 0.4 * pulse));
-                draw_rectangle_lines(card_x + 20.0, y - 16.0, card_w - 40.0, 30.0, 1.5, Color::new(0.2, 0.85, 1.0, 0.9));
+                draw_rectangle(row_rect.x, row_rect.y, row_rect.w, row_rect.h, Color::new(0.18, 0.45, 0.85, 0.4 * pulse));
+                draw_rectangle_lines(row_rect.x, row_rect.y, row_rect.w, row_rect.h, 1.5, Color::new(0.2, 0.85, 1.0, 0.9));
+            } else if is_hov {
+                draw_rectangle(row_rect.x, row_rect.y, row_rect.w, row_rect.h, Color::new(0.14, 0.3, 0.55, 0.32));
+                draw_rectangle_lines(row_rect.x, row_rect.y, row_rect.w, row_rect.h, 1.0, Color::new(0.3, 0.7, 0.95, 0.65));
             }
 
             let col = if is_sel { Color::new(1.0, 0.95, 0.4, 1.0) } else { WHITE };
@@ -965,14 +1215,50 @@ pub fn render_server_browser(
     }
 
     // Notice about zero-cost matchmaking
-    let note = "Tip: Remastered uses zero-cost direct P2P/LAN rooms. Host a match from menu anytime!";
+    let note = "Tip: Host a P2P/LAN match from the menu anytime, or use Quick Match for ranked play!";
     let note_dim = measure_text(note, None, 13, 1.0);
-    draw_text(note, (VIRTUAL_WIDTH - note_dim.width) * 0.5, card_y + card_h - 48.0, 13.0, Color::new(0.8, 0.85, 0.95, 0.7));
+    draw_text(note, (VIRTUAL_WIDTH - note_dim.width) * 0.5, card_y + card_h - 62.0, 13.0, Color::new(0.8, 0.85, 0.95, 0.75));
 
-    // Footer actions
-    let actions = "[Enter / Click] Connect | [R] Refresh | [Esc] Return to Menu";
-    let act_dim = measure_text(actions, None, 15, 1.0);
-    draw_text(actions, (VIRTUAL_WIDTH - act_dim.width) * 0.5, card_y + card_h - 20.0, 15.0, Color::new(0.3, 0.9, 1.0, 0.95));
+    // Footer clickable buttons
+    let ref_hov = virt_mouse.is_some_and(|m| refresh_rect.contains(m));
+    draw_rectangle(
+        refresh_rect.x,
+        refresh_rect.y,
+        refresh_rect.w,
+        refresh_rect.h,
+        if ref_hov { Color::new(0.18, 0.52, 0.85, 0.85) } else { Color::new(0.1, 0.24, 0.42, 0.8) },
+    );
+    draw_rectangle_lines(
+        refresh_rect.x,
+        refresh_rect.y,
+        refresh_rect.w,
+        refresh_rect.h,
+        1.2,
+        if ref_hov { Color::new(0.4, 0.95, 1.0, 1.0) } else { Color::new(0.25, 0.75, 0.95, 0.75) },
+    );
+    let r_lbl = if is_refreshing { "Refreshing..." } else { "[R] Refresh" };
+    let r_dim = measure_text(r_lbl, None, 15, 1.0);
+    draw_text(r_lbl, refresh_rect.x + (refresh_rect.w - r_dim.width) * 0.5, refresh_rect.y + 20.0, 15.0, WHITE);
+
+    let back_hov = virt_mouse.is_some_and(|m| back_rect.contains(m));
+    draw_rectangle(
+        back_rect.x,
+        back_rect.y,
+        back_rect.w,
+        back_rect.h,
+        if back_hov { Color::new(0.35, 0.18, 0.24, 0.88) } else { Color::new(0.14, 0.16, 0.26, 0.8) },
+    );
+    draw_rectangle_lines(
+        back_rect.x,
+        back_rect.y,
+        back_rect.w,
+        back_rect.h,
+        1.2,
+        if back_hov { Color::new(1.0, 0.55, 0.55, 1.0) } else { Color::new(0.45, 0.55, 0.75, 0.7) },
+    );
+    let b_lbl = "[Esc] Back";
+    let b_dim = measure_text(b_lbl, None, 15, 1.0);
+    draw_text(b_lbl, back_rect.x + (back_rect.w - b_dim.width) * 0.5, back_rect.y + 20.0, 15.0, WHITE);
 }
 
 pub fn render_host_lobby(
@@ -1130,7 +1416,26 @@ pub fn render_chat_overlay(
     }
 }
 
-pub fn render_pause_menu(selected_item: usize) {
+pub fn get_pause_button_rects(is_online: bool) -> Vec<(usize, Rect)> {
+    let card_w = 340.0;
+    let card_h = 240.0;
+    let card_x = (VIRTUAL_WIDTH - card_w) * 0.5;
+    let card_y = (VIRTUAL_HEIGHT - card_h) * 0.5;
+
+    let ids: &[usize] = if is_online { &[0, 2] } else { &[0, 1, 2] };
+    let start_y = if is_online { card_y + 115.0 } else { card_y + 105.0 };
+    let row_h = if is_online { 50.0 } else { 42.0 };
+
+    ids.iter()
+        .enumerate()
+        .map(|(row_idx, &id)| {
+            let y = start_y + row_idx as f32 * row_h;
+            (id, Rect::new(card_x + 20.0, y - 25.0, card_w - 40.0, 34.0))
+        })
+        .collect()
+}
+
+pub fn render_pause_menu(selected_item: usize, is_online: bool, virt_mouse: Option<Vec2>) {
     draw_rectangle(0.0, 0.0, VIRTUAL_WIDTH, VIRTUAL_HEIGHT, Color::new(0.0, 0.0, 0.0, 0.65));
 
     let card_w = 340.0;
@@ -1151,35 +1456,37 @@ pub fn render_pause_menu(selected_item: usize) {
         Color::new(1.0, 0.85, 0.2, 1.0),
     );
 
-    let items = ["RESUME MATCH", "RESTART SET", "MAIN MENU"];
-    let start_y = card_y + 105.0;
-    let row_h = 42.0;
+    let buttons = get_pause_button_rects(is_online);
+    for (id, rect) in buttons {
+        let label = match id {
+            0 => "RESUME MATCH",
+            1 => "RESTART SET",
+            _ => if is_online { "LEAVE MATCH" } else { "MAIN MENU" },
+        };
+        let is_sel = id == selected_item;
+        let is_hov = virt_mouse.is_some_and(|m| rect.contains(m));
 
-    for (i, item) in items.iter().enumerate() {
-        let is_sel = i == selected_item;
-        let y = start_y + i as f32 * row_h;
-
-        if is_sel {
+        if is_sel || is_hov {
             draw_rectangle(
-                card_x + 20.0,
-                y - 25.0,
-                card_w - 40.0,
-                34.0,
-                Color::new(0.18, 0.45, 0.85, 0.5),
+                rect.x,
+                rect.y,
+                rect.w,
+                rect.h,
+                if is_sel { Color::new(0.18, 0.45, 0.85, 0.5) } else { Color::new(0.14, 0.34, 0.65, 0.35) },
             );
             draw_rectangle_lines(
-                card_x + 20.0,
-                y - 25.0,
-                card_w - 40.0,
-                34.0,
+                rect.x,
+                rect.y,
+                rect.w,
+                rect.h,
                 1.5,
-                Color::new(0.2, 0.9, 1.0, 0.9),
+                if is_sel { Color::new(0.2, 0.9, 1.0, 0.9) } else { Color::new(0.3, 0.75, 0.95, 0.65) },
             );
         }
 
-        let dim = measure_text(item, None, 20, 1.0);
-        let col = if is_sel { WHITE } else { Color::new(0.75, 0.8, 0.88, 0.8) };
-        draw_text(item, (VIRTUAL_WIDTH - dim.width) * 0.5, y - 2.0, 20.0, col);
+        let dim = measure_text(label, None, 20, 1.0);
+        let col = if is_sel || is_hov { WHITE } else { Color::new(0.75, 0.8, 0.88, 0.8) };
+        draw_text(label, (VIRTUAL_WIDTH - dim.width) * 0.5, rect.y + 23.0, 20.0, col);
     }
 }
 
@@ -1374,11 +1681,31 @@ pub fn render_matchmaking_queue(
     }
 }
 
+pub fn get_victory_button_rects(has_rating: bool, allow_rematch: bool) -> (Option<Rect>, Rect) {
+    let card_w = 540.0;
+    let card_h = if has_rating { 390.0 } else { 330.0 };
+    let card_x = (VIRTUAL_WIDTH - card_w) * 0.5;
+    let card_y = (VIRTUAL_HEIGHT - card_h) * 0.5;
+    let btn_y = card_y + card_h - 62.0;
+
+    if allow_rematch {
+        let rematch_rect = Rect::new(card_x + 40.0, btn_y, 220.0, 40.0);
+        let menu_rect = Rect::new(card_x + 280.0, btn_y, 220.0, 40.0);
+        (Some(rematch_rect), menu_rect)
+    } else {
+        let btn_w = 280.0;
+        let menu_rect = Rect::new(card_x + (card_w - btn_w) * 0.5, btn_y, btn_w, 40.0);
+        (None, menu_rect)
+    }
+}
+
 pub fn render_victory_screen(
     _winner: PlayerSide,
     winner_name: &str,
     logic: &GameLogic,
     rating_update: Option<(f64, f64, &'static str)>,
+    allow_rematch: bool,
+    virt_mouse: Option<Vec2>,
     time: f32,
 ) {
     draw_rectangle(0.0, 0.0, VIRTUAL_WIDTH, VIRTUAL_HEIGHT, Color::new(0.0, 0.0, 0.0, 0.65));
@@ -1449,18 +1776,90 @@ pub fn render_victory_screen(
     draw_text(&stat2, card_x + 60.0, start_y + 28.0, 18.0, Color::new(0.8, 0.85, 0.95, 0.9));
     draw_text(&stat3, card_x + 60.0, start_y + 56.0, 18.0, Color::new(0.8, 0.85, 0.95, 0.9));
 
-    let prompt = "Press Space or Enter to Continue";
-    let prompt_dim = measure_text(prompt, None, 18, 1.0);
-    draw_text(
-        prompt,
-        (VIRTUAL_WIDTH - prompt_dim.width) * 0.5,
-        card_y + card_h - 22.0,
-        18.0,
-        Color::new(0.2, 0.9, 1.0, pulse),
-    );
+    let (rematch_rect_opt, menu_rect) = get_victory_button_rects(has_rating, allow_rematch);
+
+    if let Some(rematch_rect) = rematch_rect_opt {
+        let r_hov = virt_mouse.is_some_and(|m| rematch_rect.contains(m));
+        draw_rectangle(
+            rematch_rect.x,
+            rematch_rect.y,
+            rematch_rect.w,
+            rematch_rect.h,
+            if r_hov { Color::new(0.16, 0.55, 0.88, 0.9) } else { Color::new(0.1, 0.35, 0.6, 0.85) },
+        );
+        draw_rectangle_lines(
+            rematch_rect.x,
+            rematch_rect.y,
+            rematch_rect.w,
+            rematch_rect.h,
+            1.5,
+            if r_hov { Color::new(0.4, 0.98, 1.0, 1.0) } else { Color::new(0.25, 0.85, 1.0, 0.85) },
+        );
+        let r_lbl = "[Enter / Click] REMATCH";
+        let r_dim = measure_text(r_lbl, None, 15, 1.0);
+        draw_text(
+            r_lbl,
+            rematch_rect.x + (rematch_rect.w - r_dim.width) * 0.5,
+            rematch_rect.y + 25.0,
+            15.0,
+            WHITE,
+        );
+
+        let m_hov = virt_mouse.is_some_and(|m| menu_rect.contains(m));
+        draw_rectangle(
+            menu_rect.x,
+            menu_rect.y,
+            menu_rect.w,
+            menu_rect.h,
+            if m_hov { Color::new(0.25, 0.28, 0.42, 0.9) } else { Color::new(0.12, 0.16, 0.26, 0.85) },
+        );
+        draw_rectangle_lines(
+            menu_rect.x,
+            menu_rect.y,
+            menu_rect.w,
+            menu_rect.h,
+            1.5,
+            if m_hov { Color::new(1.0, 0.85, 0.35, 1.0) } else { Color::new(0.45, 0.55, 0.75, 0.75) },
+        );
+        let m_lbl = "[Esc / Click] MAIN MENU";
+        let m_dim = measure_text(m_lbl, None, 15, 1.0);
+        draw_text(
+            m_lbl,
+            menu_rect.x + (menu_rect.w - m_dim.width) * 0.5,
+            menu_rect.y + 25.0,
+            15.0,
+            Color::new(0.92, 0.95, 1.0, 0.95),
+        );
+    } else {
+        let m_hov = virt_mouse.is_some_and(|m| menu_rect.contains(m));
+        draw_rectangle(
+            menu_rect.x,
+            menu_rect.y,
+            menu_rect.w,
+            menu_rect.h,
+            if m_hov { Color::new(0.18, 0.52, 0.85, 0.9) } else { Color::new(0.1, 0.32, 0.58, 0.85) },
+        );
+        draw_rectangle_lines(
+            menu_rect.x,
+            menu_rect.y,
+            menu_rect.w,
+            menu_rect.h,
+            1.5,
+            if m_hov { Color::new(0.4, 0.98, 1.0, 1.0) } else { Color::new(0.25, 0.85, 1.0, 0.85) },
+        );
+        let m_lbl = "[Enter / Esc / Click] MAIN MENU";
+        let m_dim = measure_text(m_lbl, None, 15, 1.0);
+        draw_text(
+            m_lbl,
+            menu_rect.x + (menu_rect.w - m_dim.width) * 0.5,
+            menu_rect.y + 25.0,
+            15.0,
+            WHITE,
+        );
+    }
 }
 
-pub fn render_exit_confirm(time: f32) {
+pub fn render_exit_confirm(virt_mouse: Option<Vec2>, time: f32) {
     // Backdrop dark overlay
     draw_rectangle(0.0, 0.0, VIRTUAL_WIDTH, VIRTUAL_HEIGHT, Color::new(0.02, 0.03, 0.07, 0.8));
 
@@ -1497,16 +1896,44 @@ pub fn render_exit_confirm(time: f32) {
 
     // Button 1: Quit [ Enter ]
     let btn1_rect = Rect::new(card_x + 40.0, card_y + 125.0, 185.0, 44.0);
-    draw_rectangle(btn1_rect.x, btn1_rect.y, btn1_rect.w, btn1_rect.h, Color::new(0.65, 0.15, 0.15, 0.85));
-    draw_rectangle_lines(btn1_rect.x, btn1_rect.y, btn1_rect.w, btn1_rect.h, 1.5, Color::new(1.0, 0.35, 0.35, pulse));
+    let btn1_hov = virt_mouse.is_some_and(|m| btn1_rect.contains(m));
+    draw_rectangle(
+        btn1_rect.x,
+        btn1_rect.y,
+        btn1_rect.w,
+        btn1_rect.h,
+        if btn1_hov { Color::new(0.82, 0.22, 0.22, 0.95) } else { Color::new(0.65, 0.15, 0.15, 0.85) },
+    );
+    draw_rectangle_lines(
+        btn1_rect.x,
+        btn1_rect.y,
+        btn1_rect.w,
+        btn1_rect.h,
+        1.5,
+        if btn1_hov { Color::new(1.0, 0.6, 0.6, 1.0) } else { Color::new(1.0, 0.35, 0.35, pulse) },
+    );
     let t1 = "YES, QUIT [ Enter ]";
     let t1_dim = measure_text(t1, None, 15, 1.0);
     draw_text(t1, btn1_rect.x + (btn1_rect.w - t1_dim.width) * 0.5, btn1_rect.y + 27.0, 15.0, WHITE);
 
     // Button 2: Resume [ Esc ]
     let btn2_rect = Rect::new(card_x + 255.0, card_y + 125.0, 185.0, 44.0);
-    draw_rectangle(btn2_rect.x, btn2_rect.y, btn2_rect.w, btn2_rect.h, Color::new(0.12, 0.28, 0.45, 0.85));
-    draw_rectangle_lines(btn2_rect.x, btn2_rect.y, btn2_rect.w, btn2_rect.h, 1.5, Color::new(0.3, 0.85, 1.0, 0.85));
+    let btn2_hov = virt_mouse.is_some_and(|m| btn2_rect.contains(m));
+    draw_rectangle(
+        btn2_rect.x,
+        btn2_rect.y,
+        btn2_rect.w,
+        btn2_rect.h,
+        if btn2_hov { Color::new(0.18, 0.42, 0.68, 0.95) } else { Color::new(0.12, 0.28, 0.45, 0.85) },
+    );
+    draw_rectangle_lines(
+        btn2_rect.x,
+        btn2_rect.y,
+        btn2_rect.w,
+        btn2_rect.h,
+        1.5,
+        if btn2_hov { Color::new(0.5, 0.98, 1.0, 1.0) } else { Color::new(0.3, 0.85, 1.0, 0.85) },
+    );
     let t2 = "CANCEL [ ESC ]";
     let t2_dim = measure_text(t2, None, 15, 1.0);
     draw_text(t2, btn2_rect.x + (btn2_rect.w - t2_dim.width) * 0.5, btn2_rect.y + 27.0, 15.0, Color::new(0.4, 0.95, 1.0, 1.0));
@@ -1517,17 +1944,43 @@ pub fn render_exit_confirm(time: f32) {
     draw_text(hint, (VIRTUAL_WIDTH - hint_dim.width) * 0.5, card_y + 205.0, 13.0, Color::new(0.6, 0.7, 0.8, 0.75));
 }
 
+pub fn get_leaderboard_rects() -> (Vec<Rect>, Rect, Rect) {
+    let card_w = 720.0;
+    let card_h = 510.0;
+    let card_x = (VIRTUAL_WIDTH - card_w) * 0.5;
+    let card_y = (VIRTUAL_HEIGHT - card_h) * 0.5;
+
+    let tab_w = 170.0;
+    let tab_h = 28.0;
+    let tab_spacing = 20.0;
+    let start_tab_x = (VIRTUAL_WIDTH - (tab_w * 3.0 + tab_spacing * 2.0)) * 0.5;
+    let tab_y = card_y + 74.0;
+
+    let mut tabs = Vec::with_capacity(3);
+    for i in 0..3 {
+        let tx = start_tab_x + i as f32 * (tab_w + tab_spacing);
+        tabs.push(Rect::new(tx, tab_y, tab_w, tab_h));
+    }
+
+    let btn_y = card_y + card_h - 40.0;
+    let refresh_btn_rect = Rect::new(card_x + 170.0, btn_y, 175.0, 28.0);
+    let back_btn_rect = Rect::new(card_x + card_w - 170.0 - 175.0, btn_y, 175.0, 28.0);
+
+    (tabs, refresh_btn_rect, back_btn_rect)
+}
+
 pub fn render_leaderboard(
     period_idx: usize, // 0 = Week, 1 = Month, 2 = Year
     entries: &[LeaderboardEntry],
     my_name: &str,
     is_refreshing: bool,
+    virt_mouse: Option<Vec2>,
     time: f32,
 ) {
     draw_rectangle(0.0, 0.0, VIRTUAL_WIDTH, VIRTUAL_HEIGHT, Color::new(0.04, 0.05, 0.1, 0.92));
 
     let card_w = 720.0;
-    let card_h = 490.0;
+    let card_h = 510.0;
     let card_x = (VIRTUAL_WIDTH - card_w) * 0.5;
     let card_y = (VIRTUAL_HEIGHT - card_h) * 0.5;
 
@@ -1548,12 +2001,7 @@ pub fn render_leaderboard(
     let sub_dim = measure_text(sub, None, 13, 1.0);
     draw_text(sub, (VIRTUAL_WIDTH - sub_dim.width) * 0.5, card_y + 58.0, 13.0, Color::new(0.8, 0.85, 0.95, 0.8));
 
-    // Period Tabs: [ 1. THIS WEEK ] [ 2. THIS MONTH ] [ 3. THIS YEAR ]
-    let tab_w = 170.0;
-    let tab_h = 28.0;
-    let tab_spacing = 20.0;
-    let start_tab_x = (VIRTUAL_WIDTH - (tab_w * 3.0 + tab_spacing * 2.0)) * 0.5;
-    let tab_y = card_y + 74.0;
+    let (tab_rects, refresh_rect, back_rect) = get_leaderboard_rects();
 
     let periods = [
         ("1. THIS WEEK (7d)", "Active within 7 days"),
@@ -1563,25 +2011,30 @@ pub fn render_leaderboard(
 
     for (i, (tab_title, _)) in periods.iter().enumerate() {
         let is_sel = i == period_idx;
-        let tx = start_tab_x + i as f32 * (tab_w + tab_spacing);
+        let rect = tab_rects[i];
+        let is_hov = virt_mouse.is_some_and(|m| rect.contains(m));
 
         let bg_col = if is_sel {
             Color::new(0.18, 0.55, 0.9, 0.75)
+        } else if is_hov {
+            Color::new(0.14, 0.32, 0.58, 0.8)
         } else {
             Color::new(0.08, 0.12, 0.22, 0.8)
         };
         let border_col = if is_sel {
             Color::new(0.3, 0.95, 1.0, 1.0)
+        } else if is_hov {
+            Color::new(0.35, 0.75, 0.95, 0.85)
         } else {
             Color::new(0.25, 0.35, 0.5, 0.5)
         };
 
-        draw_rectangle(tx, tab_y, tab_w, tab_h, bg_col);
-        draw_rectangle_lines(tx, tab_y, tab_w, tab_h, 1.5, border_col);
+        draw_rectangle(rect.x, rect.y, rect.w, rect.h, bg_col);
+        draw_rectangle_lines(rect.x, rect.y, rect.w, rect.h, 1.5, border_col);
 
         let dim = measure_text(tab_title, None, 14, 1.0);
-        let txt_col = if is_sel { WHITE } else { Color::new(0.7, 0.75, 0.85, 0.8) };
-        draw_text(tab_title, tx + (tab_w - dim.width) * 0.5, tab_y + 19.0, 14.0, txt_col);
+        let txt_col = if is_sel || is_hov { WHITE } else { Color::new(0.7, 0.75, 0.85, 0.8) };
+        draw_text(tab_title, rect.x + (rect.w - dim.width) * 0.5, rect.y + 19.0, 14.0, txt_col);
     }
 
     // Table Header
@@ -1598,12 +2051,12 @@ pub fn render_leaderboard(
     let row_h = 31.0;
     let list_start_y = table_y + 24.0;
 
-    if is_refreshing {
+    if is_refreshing && entries.is_empty() {
         let msg = "Refreshing global rankings...";
         let dim = measure_text(msg, None, 18, 1.0);
         draw_text(msg, (VIRTUAL_WIDTH - dim.width) * 0.5, list_start_y + 100.0, 18.0, Color::new(0.3, 0.9, 1.0, 1.0));
     } else if entries.is_empty() {
-        let msg = "No active players in this period. Press R to refresh.";
+        let msg = "No active players in this period. Press R or click Refresh.";
         let dim = measure_text(msg, None, 16, 1.0);
         draw_text(msg, (VIRTUAL_WIDTH - dim.width) * 0.5, list_start_y + 100.0, 16.0, Color::new(0.7, 0.75, 0.85, 0.8));
     } else {
@@ -1665,15 +2118,51 @@ pub fn render_leaderboard(
     }
 
     // Inactivity notice banner
-    let notice_y = card_y + card_h - 60.0;
+    let notice_y = card_y + card_h - 72.0;
     draw_rectangle(card_x + 25.0, notice_y, card_w - 50.0, 24.0, Color::new(0.05, 0.08, 0.15, 0.8));
     draw_rectangle_lines(card_x + 25.0, notice_y, card_w - 50.0, 24.0, 1.0, Color::new(0.2, 0.5, 0.8, 0.4));
     let notice = "Inactivity Rules: Players drop off after 7 days (Weekly), 30 days (Monthly), 90 days (All-Time)";
     let n_dim = measure_text(notice, None, 13, 1.0);
     draw_text(notice, (VIRTUAL_WIDTH - n_dim.width) * 0.5, notice_y + 16.0, 13.0, Color::new(0.75, 0.85, 0.95, 0.85));
 
-    // Footer prompt
-    let footer = "[ Left / Right / 1-3 ] Switch Period | [ R ] Refresh | [ ESC ] Return to Main Menu";
-    let f_dim = measure_text(footer, None, 14, 1.0);
-    draw_text(footer, (VIRTUAL_WIDTH - f_dim.width) * 0.5, card_y + card_h - 16.0, 14.0, Color::new(0.3, 0.9, 1.0, 0.9));
+    // Footer clickable buttons
+    let ref_hov = virt_mouse.is_some_and(|m| refresh_rect.contains(m));
+    draw_rectangle(
+        refresh_rect.x,
+        refresh_rect.y,
+        refresh_rect.w,
+        refresh_rect.h,
+        if ref_hov { Color::new(0.18, 0.52, 0.85, 0.85) } else { Color::new(0.1, 0.24, 0.42, 0.8) },
+    );
+    draw_rectangle_lines(
+        refresh_rect.x,
+        refresh_rect.y,
+        refresh_rect.w,
+        refresh_rect.h,
+        1.2,
+        if ref_hov { Color::new(0.4, 0.95, 1.0, 1.0) } else { Color::new(0.25, 0.75, 0.95, 0.75) },
+    );
+    let r_lbl = if is_refreshing { "Refreshing..." } else { "[R] Refresh" };
+    let r_dim = measure_text(r_lbl, None, 14, 1.0);
+    draw_text(r_lbl, refresh_rect.x + (refresh_rect.w - r_dim.width) * 0.5, refresh_rect.y + 19.0, 14.0, WHITE);
+
+    let back_hov = virt_mouse.is_some_and(|m| back_rect.contains(m));
+    draw_rectangle(
+        back_rect.x,
+        back_rect.y,
+        back_rect.w,
+        back_rect.h,
+        if back_hov { Color::new(0.35, 0.18, 0.24, 0.88) } else { Color::new(0.14, 0.16, 0.26, 0.8) },
+    );
+    draw_rectangle_lines(
+        back_rect.x,
+        back_rect.y,
+        back_rect.w,
+        back_rect.h,
+        1.2,
+        if back_hov { Color::new(1.0, 0.55, 0.55, 1.0) } else { Color::new(0.45, 0.55, 0.75, 0.7) },
+    );
+    let b_lbl = "[Esc] Back";
+    let b_dim = measure_text(b_lbl, None, 14, 1.0);
+    draw_text(b_lbl, back_rect.x + (back_rect.w - b_dim.width) * 0.5, back_rect.y + 19.0, 14.0, WHITE);
 }

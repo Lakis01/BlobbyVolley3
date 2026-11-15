@@ -3,6 +3,8 @@
 // while perfectly maintaining 100% authentic physics court dynamics (0..800x600).
 use macroquad::prelude::*;
 use glam::Vec2;
+use std::cell::RefCell;
+use std::collections::HashMap;
 use crate::constants::*;
 use crate::physics::PlayerSide;
 use crate::render::blob::BlobTheme;
@@ -102,14 +104,14 @@ pub fn render_arena(arena: ArenaType, time: f32, view_x0: f32, view_w: f32, ball
     let full_w = x_right - x_left;
 
     match arena {
-        ArenaType::SunsetBeach => render_sunset_beach(time, x_left, x_right, full_w),
+        ArenaType::SunsetBeach => render_sunset_beach(time, x_left, x_right, full_w, court_width),
         ArenaType::GrandStadium => render_grand_stadium(time, x_left, x_right, full_w, ball_pos, cheer, court_width),
         ArenaType::CyberNeon => render_cyber_neon(time, x_left, x_right, full_w, ball_pos, cheer, court_width),
         ArenaType::OlympicBeach => render_olympic_beach(time, x_left, x_right, full_w, ball_pos, cheer, court_width),
-        ArenaType::ClassicRemaster => render_classic_remaster(time, x_left, x_right, full_w),
+        ArenaType::ClassicRemaster => render_classic_remaster(time, x_left, x_right, full_w, court_width),
         ArenaType::AlpinePeaks => render_alpine_peaks(time, x_left, x_right, full_w),
         ArenaType::MagmaCaldera => render_magma_caldera(time, x_left, x_right, full_w),
-        ArenaType::OrbitalStation => render_orbital_station(time, x_left, x_right, full_w),
+        ArenaType::OrbitalStation => render_orbital_station(time, x_left, x_right, full_w, court_width),
     }
 
     // Render tournament court boundary guidelines and floodlight towers
@@ -122,7 +124,7 @@ pub fn render_arena(arena: ArenaType, time: f32, view_x0: f32, view_w: f32, ball
 // =========================================================================
 // 1. COPACABANA SUNSET BEACH (Modern Tropical Sunset with Parallax Vista)
 // =========================================================================
-fn render_sunset_beach(time: f32, x_left: f32, x_right: f32, full_w: f32) {
+fn render_sunset_beach(time: f32, x_left: f32, x_right: f32, full_w: f32, court_width: f32) {
     let sky_top = -500.0;
     let sky_bot = 330.0;
     let sky_h = sky_bot - sky_top;
@@ -141,9 +143,9 @@ fn render_sunset_beach(time: f32, x_left: f32, x_right: f32, full_w: f32) {
     // Distant mountain ridge silhouettes (Sugarloaf & coastal peaks)
     let mountain_pts = [
         (x_left + 40.0, 260.0, 320.0),
-        (180.0, 240.0, 260.0),
-        (380.0, 270.0, 290.0),
-        (620.0, 250.0, 310.0),
+        (court_width * 0.225, 240.0, 260.0),
+        (court_width * 0.475, 270.0, 290.0),
+        (court_width * 0.775, 250.0, 310.0),
         (x_right - 60.0, 260.0, 340.0),
     ];
     for (mx, my, mw) in mountain_pts {
@@ -156,7 +158,7 @@ fn render_sunset_beach(time: f32, x_left: f32, x_right: f32, full_w: f32) {
     }
 
     // Setting sun with multi-layered atmospheric radial glow
-    let sun_x = 400.0;
+    let sun_x = court_width * 0.5;
     let sun_y = 230.0;
     draw_circle(sun_x, sun_y, 110.0, Color::new(1.0, 0.75, 0.2, 0.08));
     draw_circle(sun_x, sun_y, 80.0, Color::new(1.0, 0.82, 0.3, 0.18));
@@ -207,7 +209,7 @@ fn render_sunset_beach(time: f32, x_left: f32, x_right: f32, full_w: f32) {
     let sway_right = ((time * 1.4) + 1.2).sin() * 9.0;
     render_palm_tree(x_left + 80.0, GROUND_PLANE_HEIGHT_MAX, 1.2, sway_left, true);
     render_palm_tree(95.0, GROUND_PLANE_HEIGHT_MAX, 1.05, sway_left * 0.9, true);
-    render_palm_tree(705.0, GROUND_PLANE_HEIGHT_MAX, 1.1, sway_right * 0.9, false);
+    render_palm_tree(court_width - 95.0, GROUND_PLANE_HEIGHT_MAX, 1.1, sway_right * 0.9, false);
     render_palm_tree(x_right - 80.0, GROUND_PLANE_HEIGHT_MAX, 1.25, sway_right, false);
 
     // Sand dunes extending across entire display
@@ -216,8 +218,8 @@ fn render_sunset_beach(time: f32, x_left: f32, x_right: f32, full_w: f32) {
     draw_rectangle(x_left, sand_top, full_w, sand_h, Color::new(0.92, 0.76, 0.48, 1.0));
     draw_rectangle(x_left, sand_top, full_w, 18.0, Color::new(0.82, 0.64, 0.38, 0.5));
 
-    // Court sand highlight inside official play boundary (0..800)
-    draw_rectangle(0.0, sand_top + 10.0, VIRTUAL_WIDTH, sand_h, Color::new(0.95, 0.80, 0.52, 0.35));
+    // Court sand highlight inside official play boundary (0..court_width)
+    draw_rectangle(0.0, sand_top + 10.0, court_width, sand_h, Color::new(0.95, 0.80, 0.52, 0.35));
 }
 
 // =========================================================================
@@ -252,8 +254,8 @@ fn render_grand_stadium(time: f32, x_left: f32, x_right: f32, full_w: f32, ball_
     }
 
     // Suspended Arena Sound System Speakers
-    draw_rectangle(180.0, lower_arch_y + 18.0, 32.0, 18.0, Color::new(0.08, 0.1, 0.15, 0.95));
-    draw_rectangle(590.0, lower_arch_y + 18.0, 32.0, 18.0, Color::new(0.08, 0.1, 0.15, 0.95));
+    draw_rectangle(court_width * 0.225, lower_arch_y + 18.0, 32.0, 18.0, Color::new(0.08, 0.1, 0.15, 0.95));
+    draw_rectangle(court_width * 0.7375, lower_arch_y + 18.0, 32.0, 18.0, Color::new(0.08, 0.1, 0.15, 0.95));
 
     // 2. Upper Balcony Tier Bleachers (y = 165, 192, 219)
     let upper_rows = [165.0, 192.0, 219.0];
@@ -284,7 +286,7 @@ fn render_grand_stadium(time: f32, x_left: f32, x_right: f32, full_w: f32, ball_
     let court_top = GROUND_PLANE_HEIGHT_MAX - 75.0; // 425.0
     let court_h = VIRTUAL_HEIGHT - court_top + 150.0;
     draw_rectangle(x_left, court_top, full_w, court_h, Color::new(0.84, 0.65, 0.42, 1.0));
-    draw_rectangle(0.0, court_top, VIRTUAL_WIDTH, court_h, Color::new(0.89, 0.70, 0.46, 0.6));
+    draw_rectangle(0.0, court_top, court_width, court_h, Color::new(0.89, 0.70, 0.46, 0.6));
 
     // Parquet horizontal wood plank grooves
     for p in 0..14 {
@@ -486,13 +488,13 @@ fn render_olympic_beach(time: f32, x_left: f32, x_right: f32, full_w: f32, ball_
     let sand_h = VIRTUAL_HEIGHT - sand_top + 50.0;
     draw_rectangle(x_left, sand_top, full_w, sand_h, Color::new(0.92, 0.77, 0.49, 1.0));
     draw_rectangle(x_left, sand_top, full_w, 16.0, Color::new(0.82, 0.65, 0.38, 0.5));
-    draw_rectangle(0.0, sand_top + 8.0, VIRTUAL_WIDTH, sand_h, Color::new(0.96, 0.82, 0.54, 0.35));
+    draw_rectangle(0.0, sand_top + 8.0, court_width, sand_h, Color::new(0.96, 0.82, 0.54, 0.35));
 }
 
 // =========================================================================
 // 3. CLASSIC BEACH HD (Nostalgic Sunny Sky & Crystal Ocean)
 // =========================================================================
-fn render_classic_remaster(time: f32, x_left: f32, x_right: f32, full_w: f32) {
+fn render_classic_remaster(time: f32, x_left: f32, x_right: f32, full_w: f32, court_width: f32) {
     let sky_top = -500.0;
     let sky_bot = 360.0;
     let sky_h = sky_bot - sky_top;
@@ -508,8 +510,9 @@ fn render_classic_remaster(time: f32, x_left: f32, x_right: f32, full_w: f32) {
     }
 
     // Brilliant golden summer sun
-    draw_circle(680.0, 85.0, 52.0, Color::new(1.0, 0.98, 0.8, 0.18));
-    draw_circle(680.0, 85.0, 34.0, Color::new(1.0, 0.98, 0.85, 1.0));
+    let sun_x = court_width * 0.85;
+    draw_circle(sun_x, 85.0, 52.0, Color::new(1.0, 0.98, 0.8, 0.18));
+    draw_circle(sun_x, 85.0, 34.0, Color::new(1.0, 0.98, 0.85, 1.0));
 
     // Fluffy procedural cartoon clouds
     let cloud_span = full_w + 200.0;
@@ -718,13 +721,13 @@ fn render_magma_caldera(time: f32, x_left: f32, x_right: f32, full_w: f32) {
 // =========================================================================
 // 6. ORBITAL STATION (Deep Space Zero-G Deck with Blue Earth Horizon)
 // =========================================================================
-fn render_orbital_station(time: f32, x_left: f32, x_right: f32, full_w: f32) {
+fn render_orbital_station(time: f32, x_left: f32, x_right: f32, full_w: f32, court_width: f32) {
     // Deep cosmic space extending into upper sky
     draw_rectangle(x_left, -500.0, full_w, 920.0, Color::new(0.02, 0.02, 0.06, 1.0));
 
     // Cosmic nebula cloud
-    draw_circle(250.0, 150.0, 170.0, Color::new(0.45, 0.1, 0.65, 0.14));
-    draw_circle(580.0, 180.0, 150.0, Color::new(0.1, 0.4, 0.75, 0.16));
+    draw_circle(court_width * 0.3125, 150.0, 170.0, Color::new(0.45, 0.1, 0.65, 0.14));
+    draw_circle(court_width * 0.725, 180.0, 150.0, Color::new(0.1, 0.4, 0.75, 0.16));
 
     // Starfield across full screen
     for s in 0..85 {
@@ -737,7 +740,7 @@ fn render_orbital_station(time: f32, x_left: f32, x_right: f32, full_w: f32) {
     }
 
     // Curved Earth limb in the background
-    let earth_cx = 400.0;
+    let earth_cx = court_width * 0.5;
     let earth_cy = 980.0;
     let earth_r = 750.0;
     draw_circle(earth_cx, earth_cy, earth_r + 28.0, Color::new(0.15, 0.6, 1.0, 0.15));
@@ -861,6 +864,43 @@ fn render_court_boundaries(time: f32, arena: ArenaType, court_width: f32) {
 // =========================================================================
 // OPEN-SOURCE PERIMETER ADVERTISING BOARDS (Full-Screen Stadium Barrier)
 // =========================================================================
+thread_local! {
+    static SPONSOR_LOGOS: RefCell<Option<HashMap<&'static str, Texture2D>>> = RefCell::new(None);
+}
+
+fn with_sponsor_logos<F: FnOnce(&HashMap<&'static str, Texture2D>)>(f: F) {
+    SPONSOR_LOGOS.with(|cell| {
+        let mut borrow = cell.borrow_mut();
+        if borrow.is_none() {
+            let embedded: [(&'static str, &[u8]); 13] = [
+                ("PhotoCraft", include_bytes!("../../assets/sponsors/photocraft.png")),
+                ("PdfCraft", include_bytes!("../../assets/sponsors/pdfcraft.png")),
+                ("FilmCraft", include_bytes!("../../assets/sponsors/filmcraft.png")),
+                ("WordCraft", include_bytes!("../../assets/sponsors/wordcraft.png")),
+                ("LightCraft", include_bytes!("../../assets/sponsors/lightcraft.png")),
+                ("VectorCraft", include_bytes!("../../assets/sponsors/vectorcraft.png")),
+                ("EffectCraft", include_bytes!("../../assets/sponsors/effectcraft.png")),
+                ("CADCraft", include_bytes!("../../assets/sponsors/cadcraft.png")),
+                ("GridCraft", include_bytes!("../../assets/sponsors/gridcraft.png")),
+                ("DesignCraft", include_bytes!("../../assets/sponsors/designcraft.png")),
+                ("FigCraft", include_bytes!("../../assets/sponsors/figcraft.png")),
+                ("DeckCraft", include_bytes!("../../assets/sponsors/deckcraft.png")),
+                ("SoundCraft", include_bytes!("../../assets/sponsors/soundcraft.png")),
+            ];
+            let mut map = HashMap::with_capacity(embedded.len());
+            for (name, bytes) in embedded {
+                let tex = Texture2D::from_file_with_format(bytes, Some(ImageFormat::Png));
+                tex.set_filter(FilterMode::Linear);
+                map.insert(name, tex);
+            }
+            *borrow = Some(map);
+        }
+        if let Some(ref map) = *borrow {
+            f(map);
+        }
+    });
+}
+
 fn render_perimeter_boards(time: f32, _arena: ArenaType, x_left: f32, x_right: f32, court_width: f32) {
     let board_y = 398.0;
     let board_h = 24.0;
@@ -887,7 +927,7 @@ fn render_perimeter_boards(time: f32, _arena: ArenaType, x_left: f32, x_right: f
     // Top illuminated LED rail
     draw_line(board_start_x - 4.0, board_y - 2.0, board_end_x + 4.0, board_y - 2.0, 2.0, Color::new(0.6, 0.85, 1.0, 0.85));
 
-    // Open-Source distros & projects roster
+    // Open-Source Craft suite & FOSS projects roster
     struct AdBanner {
         name: &'static str,
         accent: Color,
@@ -895,6 +935,21 @@ fn render_perimeter_boards(time: f32, _arena: ArenaType, x_left: f32, x_right: f
     }
 
     let banners = [
+        // 13 Craft apps strictly sorted by GitHub stars
+        AdBanner { name: "PhotoCraft", accent: Color::new(0.28, 0.72, 1.0, 1.0), tagline: "open photo editor" },
+        AdBanner { name: "PdfCraft", accent: Color::new(0.95, 0.35, 0.32, 1.0), tagline: "open PDF reader" },
+        AdBanner { name: "FilmCraft", accent: Color::new(0.65, 0.45, 0.98, 1.0), tagline: "video editor" },
+        AdBanner { name: "WordCraft", accent: Color::new(0.25, 0.58, 0.96, 1.0), tagline: "word processor" },
+        AdBanner { name: "LightCraft", accent: Color::new(0.96, 0.68, 0.22, 1.0), tagline: "raw photo studio" },
+        AdBanner { name: "VectorCraft", accent: Color::new(0.98, 0.52, 0.18, 1.0), tagline: "vector graphics" },
+        AdBanner { name: "EffectCraft", accent: Color::new(0.75, 0.38, 0.96, 1.0), tagline: "motion & VFX" },
+        AdBanner { name: "CADCraft", accent: Color::new(0.22, 0.82, 0.68, 1.0), tagline: "2D & 3D CAD" },
+        AdBanner { name: "GridCraft", accent: Color::new(0.22, 0.82, 0.45, 1.0), tagline: "open spreadsheet" },
+        AdBanner { name: "DesignCraft", accent: Color::new(0.92, 0.32, 0.65, 1.0), tagline: "page layout" },
+        AdBanner { name: "FigCraft", accent: Color::new(0.55, 0.52, 1.0, 1.0), tagline: "UI prototyping" },
+        AdBanner { name: "DeckCraft", accent: Color::new(0.96, 0.44, 0.24, 1.0), tagline: "presentations" },
+        AdBanner { name: "SoundCraft", accent: Color::new(0.18, 0.84, 0.88, 1.0), tagline: "open-source DAW" },
+        // FOSS distros & projects
         AdBanner { name: "arch linux", accent: Color::new(0.09, 0.58, 0.82, 1.0), tagline: "keep it simple" },
         AdBanner { name: "debian", accent: Color::new(0.84, 0.04, 0.33, 1.0), tagline: "universal os" },
         AdBanner { name: "fedora", accent: Color::new(0.2, 0.45, 0.85, 1.0), tagline: "innovate" },
@@ -906,48 +961,62 @@ fn render_perimeter_boards(time: f32, _arena: ArenaType, x_left: f32, x_right: f
         AdBanner { name: "FFmpeg", accent: Color::new(0.15, 0.75, 0.25, 1.0), tagline: "fast multimedia" },
         AdBanner { name: "mpv", accent: Color::new(0.48, 0.18, 0.65, 1.0), tagline: "video player" },
         AdBanner { name: "git", accent: Color::new(0.94, 0.32, 0.2, 1.0), tagline: "source control" },
-        AdBanner { name: "GitHub", accent: Color::new(0.90, 0.92, 0.96, 1.0), tagline: "code & collaborate" },
         AdBanner { name: "OpenCode", accent: Color::new(0.18, 0.68, 0.98, 1.0), tagline: "open development" },
         AdBanner { name: "Navidrome", accent: Color::new(0.0, 0.78, 0.85, 1.0), tagline: "music server" },
         AdBanner { name: "NEOVIM", accent: Color::new(0.35, 0.72, 0.28, 1.0), tagline: "hyper extensible" },
     ];
 
-    let panel_w = 138.0;
+    let panel_w = 146.0;
     let num_panels = banners.len();
     let scroll_speed = 18.0; // pixels per second
     let total_carousel_w = num_panels as f32 * panel_w;
     let offset_x = (time * scroll_speed) % total_carousel_w;
 
     // Render continuous banner ribbon within board bounds
-    for i in 0..(num_panels * 2) {
-        let banner_idx = i % num_panels;
-        let px = board_start_x + (i as f32 * panel_w) - offset_x;
+    with_sponsor_logos(|logos| {
+        for i in 0..(num_panels * 2) {
+            let banner_idx = i % num_panels;
+            let px = board_start_x + (i as f32 * panel_w) - offset_x;
 
-        if px + panel_w < board_start_x || px > board_end_x {
-            continue;
+            if px + panel_w < board_start_x || px > board_end_x {
+                continue;
+            }
+
+            let ad = &banners[banner_idx];
+            let clamped_w = panel_w.min(board_end_x - px);
+
+            // Panel plate
+            draw_rectangle(px, board_y, clamped_w, board_h, Color::new(0.08, 0.1, 0.15, 0.9));
+            draw_rectangle_lines(px, board_y, clamped_w, board_h, 1.0, Color::new(0.2, 0.25, 0.35, 0.5));
+
+            // Left accent indicator tag
+            draw_rectangle(px + 2.0, board_y + 3.0, 3.0, board_h - 6.0, ad.accent);
+
+            // Embedded Craft PNG Logo or Handcrafted Vector Project Logo
+            if let Some(tex) = logos.get(ad.name) {
+                if px + 25.0 < board_end_x {
+                    draw_texture_ex(
+                        tex,
+                        px + 7.0,
+                        board_y + 3.0,
+                        WHITE,
+                        DrawTextureParams {
+                            dest_size: Some(Vec2::new(18.0, 18.0)),
+                            ..Default::default()
+                        },
+                    );
+                }
+            } else if px + 24.0 < board_end_x {
+                draw_project_logo(ad.name, px + 8.0, board_y + 4.0, ad.accent);
+            }
+
+            // Name and mini tagline
+            if px + 28.0 < board_end_x - 15.0 {
+                draw_text(ad.name, px + 28.0, board_y + 13.0, 11.0, WHITE);
+                draw_text(ad.tagline, px + 28.0, board_y + 21.0, 7.5, ad.accent);
+            }
         }
-
-        let ad = &banners[banner_idx];
-        let clamped_w = panel_w.min(board_end_x - px);
-
-        // Panel plate
-        draw_rectangle(px, board_y, clamped_w, board_h, Color::new(0.08, 0.1, 0.15, 0.9));
-        draw_rectangle_lines(px, board_y, clamped_w, board_h, 1.0, Color::new(0.2, 0.25, 0.35, 0.5));
-
-        // Left accent indicator tag
-        draw_rectangle(px + 2.0, board_y + 3.0, 3.0, board_h - 6.0, ad.accent);
-
-        // Handcrafted Vector Project Logo
-        if px + 24.0 < board_end_x {
-            draw_project_logo(ad.name, px + 8.0, board_y + 4.0, ad.accent);
-        }
-
-        // Name and mini tagline
-        if px + 28.0 < board_end_x - 15.0 {
-            draw_text(ad.name, px + 28.0, board_y + 13.0, 11.0, WHITE);
-            draw_text(ad.tagline, px + 28.0, board_y + 21.0, 7.5, ad.accent);
-        }
-    }
+    });
 
     // Glass sheen gloss overlay across top half of boards
     draw_rectangle(board_start_x, board_y, board_w, 6.0, Color::new(1.0, 1.0, 1.0, 0.08));
@@ -1054,13 +1123,6 @@ fn draw_project_logo(name: &str, x: f32, y: f32, accent: Color) {
             draw_circle(x + 5.5, y + 7.5, 1.2, WHITE);
             draw_circle(x + 9.5, y + 7.5, 1.2, WHITE);
             draw_line(x + 5.5, y + 7.5, x + 9.5, y + 7.5, 1.0, WHITE);
-        }
-        "GitHub" => {
-            // White Octocat badge
-            draw_circle(x + 7.5, y + 7.5, 6.2, WHITE);
-            draw_circle(x + 7.5, y + 8.2, 4.2, Color::new(0.08, 0.1, 0.15, 1.0));
-            draw_triangle(Vec2::new(x + 4.2, y + 4.8), Vec2::new(x + 5.8, y + 6.2), Vec2::new(x + 4.2, y + 7.2), Color::new(0.08, 0.1, 0.15, 1.0));
-            draw_triangle(Vec2::new(x + 10.8, y + 4.8), Vec2::new(x + 9.2, y + 6.2), Vec2::new(x + 10.8, y + 7.2), Color::new(0.08, 0.1, 0.15, 1.0));
         }
         "OpenCode" => {
             // Cyan code tags: < / >

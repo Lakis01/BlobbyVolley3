@@ -1,6 +1,7 @@
 // Blobby Volley 3 - Online & LAN Network Multiplayer Engine (Zero-Cost P2P + STUN + Serverless)
 use std::net::{TcpListener, TcpStream, UdpSocket, SocketAddrV4, Ipv4Addr, ToSocketAddrs};
-use std::io::{BufRead, BufReader, Write, Read};
+use std::io::{BufRead, BufReader, Write};
+use std::sync::mpsc;
 use std::time::Duration;
 use serde::{Deserialize, Serialize};
 use crate::physics::{PhysicWorld, PlayerInput, MatchEvent};
@@ -15,6 +16,19 @@ pub enum ClientPacket {
     Input(PlayerInput),
     Chat { sender: String, text: String },
     Ping(u64),
+    Hello { name: String, country: String, rating: f64 },
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct MatchConfigData {
+    pub score_to_win: i32,
+    pub rule_mode_index: usize,
+    pub arena_index: usize,
+    pub host_theme_index: usize,
+    pub client_theme_index: usize,
+    pub host_name: String,
+    pub host_country: String,
+    pub host_rating: f64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -22,6 +36,16 @@ pub enum ServerPacket {
     GameState(NetGameState),
     Chat { sender: String, text: String },
     Pong(u64),
+    MatchConfig {
+        score_to_win: i32,
+        rule_mode_index: usize,
+        arena_index: usize,
+        host_theme_index: usize,
+        client_theme_index: usize,
+        host_name: String,
+        host_country: String,
+        host_rating: f64,
+    },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -77,6 +101,9 @@ pub struct NetworkHost {
     pub port: u16,
     pub local_ip: String,
     pub public_endpoint: Option<String>,
+    pub match_config: Option<MatchConfigData>,
+    pub client_hello: Option<(String, String, f64)>,
+    stun_rx: Option<mpsc::Receiver<Option<String>>>,
     broadcast_socket: Option<UdpSocket>,
     last_broadcast_time: f32,
 }
@@ -88,8 +115,12 @@ impl NetworkHost {
 
         let local_ip = get_local_ip();
 
-        // Query public STUN endpoint for zero-cost internet P2P discovery
-        let public_endpoint = query_public_endpoint().map(|ep| format!("{}:{}", ep.ip(), port));
+        // Query public STUN endpoint in a background thread so bind() never stalls the UI
+        let (stun_tx, stun_rx) = mpsc::channel();
+        std::thread::spawn(move || {
+            let ep = query_public_endpoint().map(|ep| format!("{}:{}", ep.ip(), port));
+            let _ = stun_tx.send(ep);
+        });
 
         // Setup LAN UDP broadcast transmitter
         let broadcast_socket = UdpSocket::bind("0.0.0.0:0").ok().and_then(|sock| {
@@ -111,10 +142,39 @@ impl NetworkHost {
             arena_name: arena_name.to_string(),
             port,
             local_ip,
-            public_endpoint,
+            public_endpoint: None,
+            match_config: None,
+            client_hello: None,
+            stun_rx: Some(stun_rx),
             broadcast_socket,
             last_broadcast_time: -10.0,
         })
+    }
+
+    #[allow(dead_code)]
+    pub fn set_match_config(&mut self, config: MatchConfigData) {
+        self.match_config = Some(config);
+        if self.is_client_connected {
+            self.send_match_config();
+        }
+    }
+
+    pub fn send_match_config(&mut self) {
+        if !self.is_client_connected {
+            return;
+        }
+        if let Some(cfg) = self.match_config.clone() {
+            self.send_packet(&ServerPacket::MatchConfig {
+                score_to_win: cfg.score_to_win,
+                rule_mode_index: cfg.rule_mode_index,
+                arena_index: cfg.arena_index,
+                host_theme_index: cfg.host_theme_index,
+                client_theme_index: cfg.client_theme_index,
+                host_name: cfg.host_name,
+                host_country: cfg.host_country,
+                host_rating: cfg.host_rating,
+            });
+        }
     }
 
     pub fn poll_connection(&mut self) -> bool {
@@ -130,6 +190,7 @@ impl NetworkHost {
                 self.reader = Some(BufReader::new(stream_clone));
                 self.client_stream = Some(stream);
                 self.is_client_connected = true;
+                self.send_match_config();
                 return true;
             }
         }
@@ -137,6 +198,19 @@ impl NetworkHost {
     }
 
     pub fn update(&mut self, current_time: f32) {
+        if let Some(ref rx) = self.stun_rx {
+            match rx.try_recv() {
+                Ok(ep) => {
+                    self.public_endpoint = ep;
+                    self.stun_rx = None;
+                }
+                Err(mpsc::TryRecvError::Disconnected) => {
+                    self.stun_rx = None;
+                }
+                Err(mpsc::TryRecvError::Empty) => {}
+            }
+        }
+
         if !self.is_client_connected {
             self.poll_connection();
 
@@ -183,10 +257,17 @@ impl NetworkHost {
                         ClientPacket::Ping(t) => {
                             pongs_to_send.push(t);
                         }
+                        ClientPacket::Hello { name, country, rating } => {
+                            self.client_hello = Some((name, country, rating));
+                        }
                     }
                 }
                 line.clear();
             }
+        }
+
+        if !self.is_client_connected {
+            self.reader = None;
         }
 
         for t in pongs_to_send {
@@ -258,10 +339,13 @@ pub struct NetworkClient {
     pub is_connected: bool,
     pub is_connecting: bool,
     pub latest_state: Option<NetGameState>,
+    pub pending_events: Vec<NetEvent>,
+    pub received_match_config: Option<MatchConfigData>,
     pub new_chat_messages: Vec<(String, String)>,
     #[allow(dead_code)]
     pub ping_ms: u32,
     pub error_message: Option<String>,
+    connect_rx: Option<mpsc::Receiver<Result<TcpStream, String>>>,
 }
 
 impl NetworkClient {
@@ -272,15 +356,27 @@ impl NetworkClient {
             is_connected: false,
             is_connecting: false,
             latest_state: None,
+            pending_events: Vec::new(),
+            received_match_config: None,
             new_chat_messages: Vec::new(),
             ping_ms: 0,
             error_message: None,
+            connect_rx: None,
         }
     }
 
+    #[allow(dead_code)]
+    pub fn take_events(&mut self) -> Vec<NetEvent> {
+        std::mem::take(&mut self.pending_events)
+    }
+
+    #[allow(dead_code)]
     pub fn connect(&mut self, target_addr: &str) {
         self.is_connecting = true;
         self.error_message = None;
+        self.connect_rx = None;
+        self.pending_events.clear();
+        self.received_match_config = None;
 
         let addr = if target_addr.contains(':') {
             target_addr.to_string()
@@ -288,10 +384,13 @@ impl NetworkClient {
             format!("{}:{}", target_addr, DEFAULT_PORT)
         };
 
-        match TcpStream::connect_timeout(
-            &addr.parse().unwrap_or_else(|_| "127.0.0.1:1234".parse().unwrap()),
-            Duration::from_millis(3000),
-        ) {
+        let resolved = addr
+            .to_socket_addrs()
+            .ok()
+            .and_then(|mut it| it.next())
+            .unwrap_or_else(|| "127.0.0.1:1234".parse().unwrap());
+
+        match TcpStream::connect_timeout(&resolved, Duration::from_millis(3000)) {
             Ok(stream) => {
                 let _ = stream.set_nodelay(true);
                 let _ = stream.set_nonblocking(true);
@@ -311,7 +410,74 @@ impl NetworkClient {
         }
     }
 
+    #[allow(dead_code)]
+    pub fn connect_async(&mut self, target_addr: &str) {
+        self.is_connecting = true;
+        self.is_connected = false;
+        self.error_message = None;
+        self.stream = None;
+        self.reader = None;
+        self.pending_events.clear();
+        self.received_match_config = None;
+
+        let addr = if target_addr.contains(':') {
+            target_addr.to_string()
+        } else {
+            format!("{}:{}", target_addr, DEFAULT_PORT)
+        };
+
+        let (tx, rx) = mpsc::channel();
+        self.connect_rx = Some(rx);
+        std::thread::spawn(move || {
+            let res = match addr.to_socket_addrs() {
+                Ok(mut addrs) => {
+                    if let Some(sa) = addrs.next() {
+                        TcpStream::connect_timeout(&sa, Duration::from_millis(3000))
+                            .map_err(|e| format!("Connection failed: {}", e))
+                    } else {
+                        Err("Could not resolve host address".to_string())
+                    }
+                }
+                Err(e) => Err(format!("Invalid address: {}", e)),
+            };
+            let _ = tx.send(res);
+        });
+    }
+
     pub fn update(&mut self) {
+        if let Some(ref rx) = self.connect_rx {
+            match rx.try_recv() {
+                Ok(Ok(stream)) => {
+                    let _ = stream.set_nodelay(true);
+                    let _ = stream.set_nonblocking(true);
+                    if let Ok(stream_clone) = stream.try_clone() {
+                        self.reader = Some(BufReader::new(stream_clone));
+                        self.stream = Some(stream);
+                        self.is_connected = true;
+                        self.is_connecting = false;
+                    } else {
+                        self.is_connecting = false;
+                        self.is_connected = false;
+                        self.error_message = Some("Failed to clone client socket".to_string());
+                    }
+                    self.connect_rx = None;
+                }
+                Ok(Err(e)) => {
+                    self.is_connecting = false;
+                    self.is_connected = false;
+                    self.error_message = Some(e);
+                    self.connect_rx = None;
+                }
+                Err(mpsc::TryRecvError::Disconnected) => {
+                    self.is_connecting = false;
+                    self.is_connected = false;
+                    self.error_message = Some("Connection worker terminated".to_string());
+                    self.connect_rx = None;
+                }
+                Err(mpsc::TryRecvError::Empty) => {}
+            }
+        }
+
         if !self.is_connected {
             return;
         }
@@ -328,12 +494,34 @@ impl NetworkClient {
                 if let Ok(packet) = serde_json::from_str::<ServerPacket>(line.trim()) {
                     match packet {
                         ServerPacket::GameState(state) => {
+                            self.pending_events.extend(state.events.iter().cloned());
                             self.latest_state = Some(state);
                         }
                         ServerPacket::Chat { sender, text } => {
                             self.new_chat_messages.push((sender, text));
                         }
                         ServerPacket::Pong(_) => {}
+                        ServerPacket::MatchConfig {
+                            score_to_win,
+                            rule_mode_index,
+                            arena_index,
+                            host_theme_index,
+                            client_theme_index,
+                            host_name,
+                            host_country,
+                            host_rating,
+                        } => {
+                            self.received_match_config = Some(MatchConfigData {
+                                score_to_win,
+                                rule_mode_index,
+                                arena_index,
+                                host_theme_index,
+                                client_theme_index,
+                                host_name,
+                                host_country,
+                                host_rating,
+                            });
+                        }
                     }
                 }
                 line.clear();
@@ -349,6 +537,15 @@ impl NetworkClient {
         self.send_packet(&ClientPacket::Chat {
             sender: sender.to_string(),
             text: text.to_string(),
+        });
+    }
+
+    #[allow(dead_code)]
+    pub fn send_hello(&mut self, name: &str, country: &str, rating: f64) {
+        self.send_packet(&ClientPacket::Hello {
+            name: name.to_string(),
+            country: country.to_string(),
+            rating,
         });
     }
 
@@ -500,6 +697,7 @@ pub struct ServerEntry {
 }
 
 /// Parses server entries from Blobby Volley 2 XML response
+#[allow(dead_code)]
 pub fn parse_server_xml(xml: &str) -> Vec<ServerEntry> {
     let mut list = Vec::new();
     let mut current_host = String::new();
@@ -539,8 +737,14 @@ pub fn parse_server_xml(xml: &str) -> Vec<ServerEntry> {
     list
 }
 
-/// Queries available servers: LAN auto-discovered rooms, Cloudflare Worker rooms, and legacy BV2 servers
+/// Queries available servers: LAN auto-discovered rooms, optional coordinator registry rooms, and local loopback
+#[allow(dead_code)]
 pub fn query_master_server() -> Vec<ServerEntry> {
+    query_master_server_with_registry(None)
+}
+
+/// Queries available servers with an optional HTTP/HTTPS coordinator registry URL
+pub fn query_master_server_with_registry(coordinator_url: Option<&str>) -> Vec<ServerEntry> {
     let mut list = Vec::new();
 
     // 1. Poll LAN Discovery Listener for active rooms on the local network
@@ -552,17 +756,25 @@ pub fn query_master_server() -> Vec<ServerEntry> {
         }
     }
 
-    // 2. Query official legacy master list with strict connect & read timeouts (600ms max)
-    if let Ok(mut addrs) = ("blobbyvolley.de", 80).to_socket_addrs() {
-        if let Some(addr) = addrs.next() {
-            if let Ok(mut stream) = TcpStream::connect_timeout(&addr, Duration::from_millis(600)) {
-                let _ = stream.set_read_timeout(Some(Duration::from_millis(600)));
-                let _ = stream.set_write_timeout(Some(Duration::from_millis(600)));
-                let req = "GET /server.php HTTP/1.1\r\nHost: blobbyvolley.de\r\nConnection: close\r\n\r\n";
-                if stream.write_all(req.as_bytes()).is_ok() {
-                    let mut response = String::new();
-                    if stream.read_to_string(&mut response).is_ok() {
-                        list.extend(parse_server_xml(&response));
+    // 2. Optional remote registry /rooms query via ureq (HTTP & HTTPS)
+    if let Some(raw_url) = coordinator_url {
+        if let Some(base) = normalize_base_url(raw_url) {
+            let endpoint = format!("{}/rooms", base);
+            let agent = build_http_agent();
+            if let Ok(resp) = agent.get(&endpoint).call() {
+                if let Ok(text) = resp.into_body().read_to_string() {
+                    let parsed_rooms = serde_json::from_str::<Vec<ServerEntry>>(&text).ok().or_else(|| {
+                        serde_json::from_str::<serde_json::Value>(&text)
+                            .ok()
+                            .and_then(|val| val.get("rooms").cloned())
+                            .and_then(|rooms| serde_json::from_value::<Vec<ServerEntry>>(rooms).ok())
+                    });
+                    if let Some(rooms) = parsed_rooms {
+                        for room in rooms {
+                            if !list.iter().any(|s: &ServerEntry| s.host == room.host && s.port == room.port) {
+                                list.push(room);
+                            }
+                        }
                     }
                 }
             }
@@ -570,13 +782,15 @@ pub fn query_master_server() -> Vec<ServerEntry> {
     }
 
     // 3. Always include local loopback option for testing
-    list.push(ServerEntry {
-        name: "Localhost Remastered Room".to_string(),
-        host: "127.0.0.1".to_string(),
-        port: DEFAULT_PORT,
-        server_type: "LAN / Loopback".to_string(),
-        ping_ms: Some(1),
-    });
+    if !list.iter().any(|s: &ServerEntry| s.host == "127.0.0.1" && s.port == DEFAULT_PORT) {
+        list.push(ServerEntry {
+            name: "Localhost Remastered Room".to_string(),
+            host: "127.0.0.1".to_string(),
+            port: DEFAULT_PORT,
+            server_type: "LAN / Loopback".to_string(),
+            ping_ms: Some(1),
+        });
+    }
 
     list
 }
@@ -686,6 +900,8 @@ pub struct QuickMatchAgent {
     pub accepted_cross_id: Option<String>,
     pub active_challenges: Vec<ChallengeBroadcast>,
     socket: Option<UdpSocket>,
+    http_poll_rx: Option<mpsc::Receiver<Option<MatchmakingStatus>>>,
+    challenges_rx: Option<mpsc::Receiver<Vec<ChallengeBroadcast>>>,
 }
 
 impl QuickMatchAgent {
@@ -741,6 +957,8 @@ impl QuickMatchAgent {
             accepted_cross_id: None,
             active_challenges: Vec::new(),
             socket: bound_socket,
+            http_poll_rx: None,
+            challenges_rx: None,
         }
     }
 
@@ -853,21 +1071,11 @@ impl QuickMatchAgent {
             }
         }
 
-        // 3. Poll HTTP serverless coordinator if configured
-        if let Some(ref url) = self.coordinator_url {
-            if current_time - self.last_http_poll_time >= 1.5 {
-                self.last_http_poll_time = current_time;
-                if let Some(status) = poll_http_coordinator(
-                    url,
-                    &self.player_id,
-                    &self.player_name,
-                    &self.country_code,
-                    self.rating,
-                    self.rd,
-                    self.arena_index,
-                    self.elo_range.to_index(),
-                    self.accepted_cross_id.as_deref(),
-                ) {
+        // 3. Poll HTTP/HTTPS serverless coordinator asynchronously via background mpsc channels
+        if let Some(ref rx) = self.http_poll_rx {
+            match rx.try_recv() {
+                Ok(Some(status)) => {
+                    self.http_poll_rx = None;
                     match status {
                         MatchmakingStatus::CrossArenaOfferReceived(ref offer) => {
                             self.active_offer = Some(offer.clone());
@@ -879,11 +1087,65 @@ impl QuickMatchAgent {
                         _ => {}
                     }
                 }
+                Ok(None) | Err(mpsc::TryRecvError::Disconnected) => {
+                    self.http_poll_rx = None;
+                }
+                Err(mpsc::TryRecvError::Empty) => {}
+            }
+        }
+
+        if let Some(ref rx) = self.challenges_rx {
+            match rx.try_recv() {
+                Ok(list) => {
+                    self.active_challenges = list;
+                    self.challenges_rx = None;
+                }
+                Err(mpsc::TryRecvError::Disconnected) => {
+                    self.challenges_rx = None;
+                }
+                Err(mpsc::TryRecvError::Empty) => {}
+            }
+        }
+
+        if let Some(ref url) = self.coordinator_url {
+            if current_time - self.last_http_poll_time >= 1.5 && self.http_poll_rx.is_none() {
+                self.last_http_poll_time = current_time;
+                let url_c = url.clone();
+                let pid_c = self.player_id.clone();
+                let name_c = self.player_name.clone();
+                let country_c = self.country_code.clone();
+                let rating_c = self.rating;
+                let rd_c = self.rd;
+                let arena_c = self.arena_index;
+                let range_c = self.elo_range.to_index();
+                let accepted_c = self.accepted_cross_id.clone();
+                let (tx, rx) = mpsc::channel();
+                self.http_poll_rx = Some(rx);
+                std::thread::spawn(move || {
+                    let res = poll_http_coordinator(
+                        &url_c,
+                        &pid_c,
+                        &name_c,
+                        &country_c,
+                        rating_c,
+                        rd_c,
+                        arena_c,
+                        range_c,
+                        accepted_c.as_deref(),
+                    );
+                    let _ = tx.send(res);
+                });
             }
 
-            if current_time - self.last_challenges_poll_time >= 3.0 {
+            if current_time - self.last_challenges_poll_time >= 3.0 && self.challenges_rx.is_none() {
                 self.last_challenges_poll_time = current_time;
-                self.active_challenges = fetch_challenges(url);
+                let url_c = url.clone();
+                let (tx, rx) = mpsc::channel();
+                self.challenges_rx = Some(rx);
+                std::thread::spawn(move || {
+                    let list = fetch_challenges(&url_c);
+                    let _ = tx.send(list);
+                });
             }
         }
 
@@ -928,36 +1190,33 @@ impl QuickMatchAgent {
 
     pub fn cancel(&self) {
         if let Some(ref url) = self.coordinator_url {
-            cancel_http_coordinator(url, &self.player_id);
+            let url_c = url.clone();
+            let pid_c = self.player_id.clone();
+            std::thread::spawn(move || {
+                cancel_http_coordinator(&url_c, &pid_c);
+            });
         }
     }
 }
 
-struct SimpleUrl {
-    host: String,
-    port: u16,
-    _path: String,
+fn normalize_base_url(raw: &str) -> Option<String> {
+    let trimmed = raw.trim().trim_end_matches('/');
+    if trimmed.is_empty() {
+        return None;
+    }
+    if trimmed.starts_with("http://") || trimmed.starts_with("https://") {
+        Some(trimmed.to_string())
+    } else {
+        Some(format!("http://{}", trimmed))
+    }
 }
 
-fn parse_simple_url(raw: &str) -> Option<SimpleUrl> {
-    let stripped = if let Some(s) = raw.strip_prefix("http://") {
-        s
-    } else {
-        raw
-    };
-    let (host_port, path) = if let Some(slash_idx) = stripped.find('/') {
-        (&stripped[..slash_idx], &stripped[slash_idx..])
-    } else {
-        (stripped, "/")
-    };
-    let (host, port) = if let Some(colon_idx) = host_port.find(':') {
-        let h = &host_port[..colon_idx];
-        let p = host_port[colon_idx + 1..].parse::<u16>().unwrap_or(80);
-        (h.to_string(), p)
-    } else {
-        (host_port.to_string(), 80)
-    };
-    Some(SimpleUrl { host, port, _path: path.to_string() })
+fn build_http_agent() -> ureq::Agent {
+    let config = ureq::Agent::config_builder()
+        .timeout_connect(Some(Duration::from_millis(1000)))
+        .timeout_global(Some(Duration::from_millis(1500)))
+        .build();
+    ureq::Agent::new_with_config(config)
 }
 
 fn poll_http_coordinator(
@@ -971,74 +1230,63 @@ fn poll_http_coordinator(
     elo_range_mode: usize,
     accepted_cross_id: Option<&str>,
 ) -> Option<MatchmakingStatus> {
-    let simple = parse_simple_url(base_url)?;
-    let addr = format!("{}:{}", simple.host, simple.port);
-    let mut stream = TcpStream::connect_timeout(
-        &addr.to_socket_addrs().ok()?.next()?,
-        Duration::from_millis(400),
-    ).ok()?;
-    let _ = stream.set_read_timeout(Some(Duration::from_millis(400)));
-    let _ = stream.set_write_timeout(Some(Duration::from_millis(400)));
+    let base = normalize_base_url(base_url)?;
+    let endpoint = format!("{}/matchmaking/queue", base);
+    let payload = serde_json::json!({
+        "player_id": player_id,
+        "name": name,
+        "country": country,
+        "rating": rating,
+        "rd": rd,
+        "arena_index": arena_index,
+        "elo_range_mode": elo_range_mode,
+        "accepted_cross_arena_id": accepted_cross_id,
+    });
+    let body = serde_json::to_string(&payload).ok()?;
 
-    let body = format!(
-        r#"{{"player_id":"{}","name":"{}","country":"{}","rating":{},"rd":{},"arena_index":{},"elo_range_mode":{},"accepted_cross_arena_id":{}}}"#,
-        player_id,
-        name,
-        country,
-        rating,
-        rd,
-        arena_index,
-        elo_range_mode,
-        accepted_cross_id.map_or("null".to_string(), |id| format!("\"{}\"", id))
-    );
-    let req = format!(
-        "POST /matchmaking/queue HTTP/1.1\r\nHost: {}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
-        simple.host,
-        body.len(),
-        body
-    );
-    stream.write_all(req.as_bytes()).ok()?;
-    let mut resp = String::new();
-    stream.read_to_string(&mut resp).ok()?;
+    let agent = build_http_agent();
+    let resp = agent
+        .post(&endpoint)
+        .header("Content-Type", "application/json")
+        .send(&body)
+        .ok()?;
+    let json_body = resp.into_body().read_to_string().ok()?;
 
-    if let Some(json_start) = resp.find("\r\n\r\n") {
-        let json_body = &resp[json_start + 4..];
-        if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(json_body) {
-            let status = parsed.get("status").and_then(|v| v.as_str());
-            if status == Some("matched") {
-                if let Some(m) = parsed.get("match") {
-                    let role = m.get("role").and_then(|v| v.as_str()).unwrap_or("client");
-                    let opp_name = m.get("opponent_name").and_then(|v| v.as_str()).unwrap_or("Opponent").to_string();
-                    let opp_country = m.get("opponent_country").and_then(|v| v.as_str()).unwrap_or("").to_string();
-                    let opp_r = m.get("opponent_rating").and_then(|v| v.as_f64()).unwrap_or(1500.0);
-                    let opp_rd = m.get("opponent_rd").and_then(|v| v.as_f64()).unwrap_or(350.0);
-                    let agreed_arena = m.get("agreed_arena").and_then(|v| v.as_u64()).unwrap_or(arena_index as u64) as usize;
-                    let connect_to = m.get("connect_to").and_then(|v| v.as_str()).unwrap_or("127.0.0.1:1234").to_string();
+    if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&json_body) {
+        let status = parsed.get("status").and_then(|v| v.as_str());
+        if status == Some("matched") {
+            if let Some(m) = parsed.get("match") {
+                let role = m.get("role").and_then(|v| v.as_str()).unwrap_or("client");
+                let opp_name = m.get("opponent_name").and_then(|v| v.as_str()).unwrap_or("Opponent").to_string();
+                let opp_country = m.get("opponent_country").and_then(|v| v.as_str()).unwrap_or("").to_string();
+                let opp_r = m.get("opponent_rating").and_then(|v| v.as_f64()).unwrap_or(1500.0);
+                let opp_rd = m.get("opponent_rd").and_then(|v| v.as_f64()).unwrap_or(350.0);
+                let agreed_arena = m.get("agreed_arena").and_then(|v| v.as_u64()).unwrap_or(arena_index as u64) as usize;
+                let connect_to = m.get("connect_to").and_then(|v| v.as_str()).unwrap_or("127.0.0.1:1234").to_string();
 
-                    if role == "host" {
-                        return Some(MatchmakingStatus::MatchedAsHost {
-                            opponent_name: opp_name,
-                            opponent_country: opp_country,
-                            opponent_rating: opp_r,
-                            opponent_rd: opp_rd,
-                            agreed_arena,
-                        });
-                    } else {
-                        return Some(MatchmakingStatus::MatchedAsClient {
-                            target_addr: connect_to,
-                            opponent_name: opp_name,
-                            opponent_country: opp_country,
-                            opponent_rating: opp_r,
-                            opponent_rd: opp_rd,
-                            agreed_arena,
-                        });
-                    }
+                if role == "host" {
+                    return Some(MatchmakingStatus::MatchedAsHost {
+                        opponent_name: opp_name,
+                        opponent_country: opp_country,
+                        opponent_rating: opp_r,
+                        opponent_rd: opp_rd,
+                        agreed_arena,
+                    });
+                } else {
+                    return Some(MatchmakingStatus::MatchedAsClient {
+                        target_addr: connect_to,
+                        opponent_name: opp_name,
+                        opponent_country: opp_country,
+                        opponent_rating: opp_r,
+                        opponent_rd: opp_rd,
+                        agreed_arena,
+                    });
                 }
-            } else if status == Some("cross_arena_offer") {
-                if let Some(o) = parsed.get("offer") {
-                    if let Ok(offer) = serde_json::from_value::<CrossArenaOffer>(o.clone()) {
-                        return Some(MatchmakingStatus::CrossArenaOfferReceived(offer));
-                    }
+            }
+        } else if status == Some("cross_arena_offer") {
+            if let Some(o) = parsed.get("offer") {
+                if let Ok(offer) = serde_json::from_value::<CrossArenaOffer>(o.clone()) {
+                    return Some(MatchmakingStatus::CrossArenaOfferReceived(offer));
                 }
             }
         }
@@ -1047,27 +1295,13 @@ fn poll_http_coordinator(
 }
 
 pub fn fetch_challenges(base_url: &str) -> Vec<ChallengeBroadcast> {
-    if let Some(simple) = parse_simple_url(base_url) {
-        let addr = format!("{}:{}", simple.host, simple.port);
-        if let Ok(mut addrs) = addr.to_socket_addrs() {
-            if let Some(sa) = addrs.next() {
-                if let Ok(mut stream) = TcpStream::connect_timeout(&sa, Duration::from_millis(400)) {
-                    let _ = stream.set_read_timeout(Some(Duration::from_millis(400)));
-                    let req = format!(
-                        "GET /challenges HTTP/1.1\r\nHost: {}\r\nConnection: close\r\n\r\n",
-                        simple.host
-                    );
-                    if stream.write_all(req.as_bytes()).is_ok() {
-                        let mut resp = String::new();
-                        if stream.read_to_string(&mut resp).is_ok() {
-                            if let Some(json_idx) = resp.find("\r\n\r\n") {
-                                let json = &resp[json_idx + 4..];
-                                if let Ok(list) = serde_json::from_str::<Vec<ChallengeBroadcast>>(json) {
-                                    return list;
-                                }
-                            }
-                        }
-                    }
+    if let Some(base) = normalize_base_url(base_url) {
+        let endpoint = format!("{}/challenges", base);
+        let agent = build_http_agent();
+        if let Ok(resp) = agent.get(&endpoint).call() {
+            if let Ok(json) = resp.into_body().read_to_string() {
+                if let Ok(list) = serde_json::from_str::<Vec<ChallengeBroadcast>>(&json) {
+                    return list;
                 }
             }
         }
@@ -1076,19 +1310,10 @@ pub fn fetch_challenges(base_url: &str) -> Vec<ChallengeBroadcast> {
 }
 
 fn cancel_http_coordinator(base_url: &str, player_id: &str) {
-    if let Some(simple) = parse_simple_url(base_url) {
-        let addr = format!("{}:{}", simple.host, simple.port);
-        if let Ok(mut addrs) = addr.to_socket_addrs() {
-            if let Some(sa) = addrs.next() {
-                if let Ok(mut stream) = TcpStream::connect_timeout(&sa, Duration::from_millis(300)) {
-                    let req = format!(
-                        "DELETE /matchmaking/cancel?player_id={} HTTP/1.1\r\nHost: {}\r\nConnection: close\r\n\r\n",
-                        player_id, simple.host
-                    );
-                    let _ = stream.write_all(req.as_bytes());
-                }
-            }
-        }
+    if let Some(base) = normalize_base_url(base_url) {
+        let endpoint = format!("{}/matchmaking/cancel", base);
+        let agent = build_http_agent();
+        let _ = agent.delete(&endpoint).query("player_id", player_id).call();
     }
 }
 
@@ -1114,25 +1339,23 @@ pub fn submit_leaderboard_rating(
     wins: u32,
     total: u32,
 ) {
-    if let Some(url) = coordinator_url {
-        if let Some(simple) = parse_simple_url(url) {
-            let addr = format!("{}:{}", simple.host, simple.port);
-            if let Ok(mut addrs) = addr.to_socket_addrs() {
-                if let Some(sa) = addrs.next() {
-                    if let Ok(mut stream) = TcpStream::connect_timeout(&sa, Duration::from_millis(300)) {
-                        let body = format!(
-                            r#"{{"player_id":"{}","name":"{}","rating":{},"rd":{},"matches_won":{},"matches_played":{}}}"#,
-                            player_id, name, rating, rd, wins, total
-                        );
-                        let req = format!(
-                            "POST /leaderboard/submit HTTP/1.1\r\nHost: {}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
-                            simple.host,
-                            body.len(),
-                            body
-                        );
-                        let _ = stream.write_all(req.as_bytes());
-                    }
-                }
+    if let Some(raw_url) = coordinator_url {
+        if let Some(base) = normalize_base_url(raw_url) {
+            let endpoint = format!("{}/leaderboard/submit", base);
+            let payload = serde_json::json!({
+                "player_id": player_id,
+                "name": name,
+                "rating": rating,
+                "rd": rd,
+                "matches_won": wins,
+                "matches_played": total,
+            });
+            if let Ok(body) = serde_json::to_string(&payload) {
+                let agent = build_http_agent();
+                let _ = agent
+                    .post(&endpoint)
+                    .header("Content-Type", "application/json")
+                    .send(&body);
             }
         }
     }
@@ -1147,36 +1370,22 @@ pub fn fetch_leaderboard(
     my_played: u32,
 ) -> Vec<LeaderboardEntry> {
     // 1. Try querying remote coordinator if configured
-    if let Some(url) = coordinator_url {
-        if let Some(simple) = parse_simple_url(url) {
-            let addr = format!("{}:{}", simple.host, simple.port);
-            if let Ok(mut addrs) = addr.to_socket_addrs() {
-                if let Some(sa) = addrs.next() {
-                    if let Ok(mut stream) = TcpStream::connect_timeout(&sa, Duration::from_millis(500)) {
-                        let _ = stream.set_read_timeout(Some(Duration::from_millis(500)));
-                        let req = format!(
-                            "GET /leaderboard?period={} HTTP/1.1\r\nHost: {}\r\nConnection: close\r\n\r\n",
-                            period, simple.host
-                        );
-                        if stream.write_all(req.as_bytes()).is_ok() {
-                            let mut resp = String::new();
-                            if stream.read_to_string(&mut resp).is_ok() {
-                                if let Some(json_idx) = resp.find("\r\n\r\n") {
-                                    let json = &resp[json_idx + 4..];
-                                    if let Ok(val) = serde_json::from_str::<serde_json::Value>(json) {
-                                        if let Some(list) = val.get("leaderboard").and_then(|v| v.as_array()) {
-                                            let mut entries = Vec::new();
-                                            for item in list {
-                                                if let Ok(entry) = serde_json::from_value::<LeaderboardEntry>(item.clone()) {
-                                                    entries.push(entry);
-                                                }
-                                            }
-                                            if !entries.is_empty() {
-                                                return entries;
-                                            }
-                                        }
-                                    }
+    if let Some(raw_url) = coordinator_url {
+        if let Some(base) = normalize_base_url(raw_url) {
+            let endpoint = format!("{}/leaderboard", base);
+            let agent = build_http_agent();
+            if let Ok(resp) = agent.get(&endpoint).query("period", period).call() {
+                if let Ok(json) = resp.into_body().read_to_string() {
+                    if let Ok(val) = serde_json::from_str::<serde_json::Value>(&json) {
+                        if let Some(list) = val.get("leaderboard").and_then(|v| v.as_array()) {
+                            let mut entries = Vec::new();
+                            for item in list {
+                                if let Ok(entry) = serde_json::from_value::<LeaderboardEntry>(item.clone()) {
+                                    entries.push(entry);
                                 }
+                            }
+                            if !entries.is_empty() {
+                                return entries;
                             }
                         }
                     }
@@ -1261,4 +1470,94 @@ pub fn fetch_leaderboard(
     }
 
     entries
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::physics::PlayerSide;
+    use crate::rules::RuleMode;
+
+    #[test]
+    fn test_normalize_base_url() {
+        assert_eq!(
+            normalize_base_url("https://relay.example.workers.dev/"),
+            Some("https://relay.example.workers.dev".to_string())
+        );
+        assert_eq!(
+            normalize_base_url("http://127.0.0.1:8787///"),
+            Some("http://127.0.0.1:8787".to_string())
+        );
+        assert_eq!(
+            normalize_base_url("localhost:8787/"),
+            Some("http://localhost:8787".to_string())
+        );
+        assert_eq!(normalize_base_url("   "), None);
+    }
+
+    #[test]
+    fn test_match_config_hello_and_pending_events() {
+        let port = 19284;
+        let mut host = NetworkHost::bind(port, "HostPlayer", "DE", "Copacabana Sunset")
+            .expect("bind test port");
+        host.set_match_config(MatchConfigData {
+            score_to_win: 21,
+            rule_mode_index: 1,
+            arena_index: 3,
+            host_theme_index: 2,
+            client_theme_index: 4,
+            host_name: "HostPlayer".to_string(),
+            host_country: "DE".to_string(),
+            host_rating: 1640.0,
+        });
+
+        let mut client = NetworkClient::new();
+        client.connect_async(&format!("127.0.0.1:{}", port));
+
+        for _ in 0..40 {
+            host.poll_connection();
+            client.update();
+            if host.is_client_connected && client.is_connected && client.received_match_config.is_some() {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(15));
+        }
+
+        assert!(host.is_client_connected);
+        assert!(client.is_connected);
+        let cfg = client.received_match_config.as_ref().expect("Client should receive MatchConfig");
+        assert_eq!(cfg.score_to_win, 21);
+        assert_eq!(cfg.arena_index, 3);
+        assert_eq!(cfg.host_name, "HostPlayer");
+
+        client.send_hello("GuestPlayer", "FR", 1580.0);
+        for _ in 0..20 {
+            host.update(0.1);
+            if host.client_hello.is_some() {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        assert_eq!(
+            host.client_hello,
+            Some(("GuestPlayer".to_string(), "FR".to_string(), 1580.0))
+        );
+
+        let physics = PhysicWorld::new();
+        let logic = GameLogic::new(RuleMode::Modern, 21);
+        host.send_game_state(&physics, &logic, &[MatchEvent::BallHitWall { side: PlayerSide::Left }]);
+        host.send_game_state(&physics, &logic, &[MatchEvent::BallHitNetTop]);
+
+        for _ in 0..20 {
+            client.update();
+            if client.pending_events.len() >= 2 {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+
+        let drained = client.take_events();
+        assert_eq!(drained.len(), 2);
+        assert!(client.take_events().is_empty());
+    }
 }

@@ -1,9 +1,10 @@
 [package]
 name = "blobby-volley-3"
-version = "3.3.0"
+version = "3.4.0"
 edition = "2021"
-authors = ["gratis01", "Blobby Volley Community"]
-description = "Blobby Volley 3 - Remastered in Rust with 2026 visual overhaul"
+authors = ["Lakis01", "Blobby Volley Community"]
+license = "GPL-3.0-or-later"
+description = "Unofficial Rust rewrite and remaster of Blobby Volley 2"
 
 [[bin]]
 name = "blobby"
@@ -28,6 +29,7 @@ quad-rand = "0.2"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 opus-pure = "0.2.2"
+ureq = "3.5"
 
 [profile.release]
 opt-level = 3

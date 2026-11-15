@@ -1,4 +1,5 @@
-// Blobby Volley 3 (Remastered) - Main Game Engine
+// Blobby Volley 3 - Main Game Engine
+use std::sync::mpsc;
 use macroquad::prelude::*;
 use glam::Vec2;
 
@@ -20,7 +21,12 @@ use rules::{GameLogic, RuleMode};
 use ai::{BotController, AiDifficulty};
 use audio::AudioManager;
 use vfx::VfxManager;
-use net::{NetworkHost, NetworkClient, NetEvent, ServerEntry, query_master_server, get_local_ip, DEFAULT_PORT, QuickMatchAgent, MatchmakingStatus, LeaderboardEntry, fetch_leaderboard, submit_leaderboard_rating};
+use net::{
+    NetworkHost, NetworkClient, NetEvent, MatchConfigData, ServerEntry,
+    query_master_server_with_registry, get_local_ip, DEFAULT_PORT,
+    QuickMatchAgent, MatchmakingStatus, LeaderboardEntry, fetch_leaderboard,
+    submit_leaderboard_rating,
+};
 use render::blob::{render_blobby, BlobTheme};
 use render::ball::{render_ball, BallTrail};
 use render::net::NetRenderer;
@@ -28,6 +34,159 @@ use render::arenas::{render_arena, ArenaType, render_court_size_visualizer};
 use render::ui::*;
 use config::{UserConfig, EloSearchRange, country_badge, country_index, country_code_at, AVAILABLE_COUNTRIES};
 use glicko::GlickoRating;
+
+#[derive(Debug, Clone, Copy, Default)]
+struct HoldRepeat {
+    active_dir: Option<i8>,
+    hold_elapsed: f32,
+    repeat_accum: f32,
+}
+
+impl HoldRepeat {
+    fn reset(&mut self) {
+        self.active_dir = None;
+        self.hold_elapsed = 0.0;
+        self.repeat_accum = 0.0;
+    }
+
+    fn update(
+        &mut self,
+        dir_held: Option<i8>,
+        dt: f32,
+        initial_delay: f32,
+        repeat_interval: Option<f32>,
+    ) -> Option<i8> {
+        let Some(dir) = dir_held else {
+            self.reset();
+            return None;
+        };
+
+        if self.active_dir != Some(dir) {
+            self.active_dir = Some(dir);
+            self.hold_elapsed = 0.0;
+            self.repeat_accum = 0.0;
+            return Some(dir);
+        }
+
+        let interval = repeat_interval?;
+
+        self.hold_elapsed += dt;
+        if self.hold_elapsed >= initial_delay {
+            self.repeat_accum += dt;
+            if self.repeat_accum >= interval {
+                self.repeat_accum -= interval;
+                return Some(dir);
+            }
+        }
+        None
+    }
+}
+
+fn record_ranked_match_result(
+    config: &mut UserConfig,
+    player1_name: &str,
+    opp_r: f64,
+    opp_rd: f64,
+    score: f64,
+) -> (f64, f64, &'static str) {
+    let old_r = config.glicko.rating;
+    let new_rating = config.glicko.update_match(opp_r, opp_rd, score);
+    config.matches_played += 1;
+    if score >= 0.99 {
+        config.matches_won += 1;
+    }
+    config.glicko = new_rating;
+    config.save();
+
+    let reg_url = config.matchmaking_registry_url.clone();
+    let pid = config.player_id.clone();
+    let pname = player1_name.to_string();
+    let r = new_rating.rating;
+    let rd = new_rating.deviation;
+    let won = config.matches_won;
+    let played = config.matches_played;
+    std::thread::spawn(move || {
+        submit_leaderboard_rating(
+            reg_url.as_deref(),
+            &pid,
+            &pname,
+            r,
+            rd,
+            won,
+            played,
+        );
+    });
+
+    (old_r, new_rating.rating, new_rating.rank_title())
+}
+
+#[allow(clippy::too_many_arguments)]
+fn format_hud_titles(
+    net_host: &Option<NetworkHost>,
+    net_client: &Option<NetworkClient>,
+    active_match_opponent: &Option<(String, f64, f64, String)>,
+    game_mode: GameMode,
+    player1_name: &str,
+    player2_name: &str,
+    config: &UserConfig,
+    difficulty: AiDifficulty,
+) -> (String, String) {
+    let left_title = if net_host.is_some() {
+        if config.country_code.is_empty() {
+            format!("{} [{:.0}] (Host)", player1_name, config.glicko.rating)
+        } else {
+            format!("{} {} [{:.0}] (Host)", country_badge(&config.country_code), player1_name, config.glicko.rating)
+        }
+    } else if net_client.is_some() {
+        if let Some((ref opp_name, opp_r, _, ref opp_c)) = active_match_opponent {
+            if opp_c.is_empty() {
+                format!("{} [{:.0}]", opp_name, opp_r)
+            } else {
+                format!("{} {} [{:.0}]", country_badge(opp_c), opp_name, opp_r)
+            }
+        } else {
+            "Host (P1)".to_string()
+        }
+    } else {
+        match game_mode {
+            GameMode::BotVsBot => format!("CPU 1 [{:.0}]", GlickoRating::ai_baseline(difficulty).0),
+            _ => {
+                if config.country_code.is_empty() {
+                    format!("{} [{:.0}]", player1_name, config.glicko.rating)
+                } else {
+                    format!("{} {} [{:.0}]", country_badge(&config.country_code), player1_name, config.glicko.rating)
+                }
+            }
+        }
+    };
+
+    let right_title = if net_host.is_some() {
+        if let Some((ref opp_name, opp_r, _, ref opp_c)) = active_match_opponent {
+            if opp_c.is_empty() {
+                format!("{} [{:.0}]", opp_name, opp_r)
+            } else {
+                format!("{} {} [{:.0}]", country_badge(opp_c), opp_name, opp_r)
+            }
+        } else {
+            "Client (P2)".to_string()
+        }
+    } else if net_client.is_some() {
+        if config.country_code.is_empty() {
+            format!("{} [{:.0}] (You)", player1_name, config.glicko.rating)
+        } else {
+            format!("{} {} [{:.0}] (You)", country_badge(&config.country_code), player1_name, config.glicko.rating)
+        }
+    } else {
+        match game_mode {
+            GameMode::SinglePlayer => format!("CPU ({}) [{:.0}]", difficulty.name(), GlickoRating::ai_baseline(difficulty).0),
+            GameMode::TwoPlayerLocal => player2_name.to_string(),
+            GameMode::BotVsBot => format!("CPU 2 ({}) [{:.0}]", difficulty.name(), GlickoRating::ai_baseline(difficulty).0),
+            _ => player2_name.to_string(),
+        }
+    };
+
+    (left_title, right_title)
+}
 
 #[derive(Debug, Clone, PartialEq)]
 enum AppState {
@@ -46,7 +205,7 @@ enum AppState {
 
 fn window_conf() -> Conf {
     Conf {
-        window_title: "Blobby Volley 3 (Remastered)".to_string(),
+        window_title: "Blobby Volley 3".to_string(),
         window_width: 1280,
         window_height: 800,
         high_dpi: true,
@@ -88,6 +247,7 @@ async fn main() {
     if fullscreen {
         macroquad::window::set_fullscreen(true);
     }
+    audio.volume = config.volume.clamp(0.0, 1.0);
     if config.sound_muted {
         audio.is_muted = true;
     }
@@ -107,9 +267,12 @@ async fn main() {
     let mut net_client: Option<NetworkClient> = None;
     let mut quick_match_agent: Option<QuickMatchAgent> = None;
     let mut active_match_opponent: Option<(String, f64, f64, String)> = None; // (name, rating, rd, country)
+    let mut is_ranked_match = false;
     let mut last_rating_update: Option<(f64, f64, &'static str)> = None; // (old_r, new_r, rank_title)
     let mut join_ip_input = format!("127.0.0.1:{}", DEFAULT_PORT);
     let local_ip = get_local_ip();
+    let mut server_browser_rx: Option<mpsc::Receiver<Vec<ServerEntry>>> = None;
+    let mut leaderboard_rx: Option<mpsc::Receiver<Vec<LeaderboardEntry>>> = None;
 
     // In-game Chat State
     let mut chat_log: Vec<(String, String, f32)> = Vec::new();
@@ -124,11 +287,18 @@ async fn main() {
     let mut cam_target_y = 300.0 - 35.0;
     let mut cam_zoom_factor = 1.0;
     let mut is_dragging_court_slider = false;
+    let mut is_dragging_volume_slider = false;
+    let mut menu_hold = HoldRepeat::default();
+    let mut country_hold = HoldRepeat::default();
+    let mut backspace_hold = HoldRepeat::default();
+    let mut active_menu_mouse_arrow: Option<(MenuItem, i8)> = None;
+    let mut active_country_mouse_arrow: Option<i8> = None;
+    let mut menu_config_dirty = false;
     let mut country_search_buf = String::new();
     let mut country_search_time = 0.0f32;
 
-    // Helper closure to save configuration
-    let save_config = |cfg: &mut UserConfig,
+    // Helper closure to sync configuration fields in memory
+    let sync_config = |cfg: &mut UserConfig,
                        p1: &str,
                        p2: &str,
                        fs: bool,
@@ -149,6 +319,20 @@ async fn main() {
         cfg.rule_mode_index = rm.to_index();
         cfg.left_theme_index = lt.to_index();
         cfg.right_theme_index = rt.to_index();
+    };
+
+    let save_config = |cfg: &mut UserConfig,
+                       p1: &str,
+                       p2: &str,
+                       fs: bool,
+                       muted: bool,
+                       score: i32,
+                       ar: ArenaType,
+                       diff: AiDifficulty,
+                       rm: RuleMode,
+                       lt: BlobTheme,
+                       rt: BlobTheme| {
+        sync_config(cfg, p1, p2, fs, muted, score, ar, diff, rm, lt, rt);
         cfg.save();
     };
 
@@ -163,7 +347,13 @@ async fn main() {
             }
         }
         if is_mouse_button_released(MouseButton::Left) {
-            is_dragging_court_slider = false;
+            active_menu_mouse_arrow = None;
+            active_country_mouse_arrow = None;
+            if is_dragging_court_slider || is_dragging_volume_slider {
+                is_dragging_court_slider = false;
+                is_dragging_volume_slider = false;
+                config.save();
+            }
         }
 
         // Viewport coordinate transformation for virtual 800x600 resolution
@@ -211,11 +401,15 @@ async fn main() {
                 }
 
                 // Keyboard Menu Navigation (Up / Down)
+                let prev_selected = menu_selected;
                 if is_key_pressed(KeyCode::Up) || is_key_pressed(KeyCode::W) {
                     menu_selected = if menu_selected == 0 { items.len().saturating_sub(1) } else { menu_selected - 1 };
                 }
                 if is_key_pressed(KeyCode::Down) || is_key_pressed(KeyCode::S) {
                     menu_selected = (menu_selected + 1) % items.len().max(1);
+                }
+                if menu_selected != prev_selected {
+                    menu_hold.reset();
                 }
 
                 // Macro to cycle a specific setting (forward or backward) without closure borrow conflicts
@@ -277,6 +471,15 @@ async fn main() {
                                 let new_cam = if $forward { cur_cam.next() } else { cur_cam.prev() };
                                 config.high_ball_camera = new_cam.to_index();
                             }
+                            render::ui::MenuItem::Volume => {
+                                let delta = if $forward { 0.05 } else { -0.05 };
+                                config.volume = (((config.volume + delta) * 20.0).round() / 20.0).clamp(0.0, 1.0);
+                                audio.volume = config.volume;
+                                if config.volume > 0.0 && audio.is_muted {
+                                    audio.is_muted = false;
+                                    config.sound_muted = false;
+                                }
+                            }
                             render::ui::MenuItem::Fullscreen => {
                                 fullscreen = !fullscreen;
                                 macroquad::window::set_fullscreen(fullscreen);
@@ -287,7 +490,7 @@ async fn main() {
                         if menu_selected >= cur_len {
                             menu_selected = cur_len.saturating_sub(1);
                         }
-                        save_config(
+                        sync_config(
                             &mut config,
                             &player1_name,
                             &player2_name,
@@ -300,28 +503,115 @@ async fn main() {
                             left_theme,
                             right_theme,
                         );
+                        menu_config_dirty = true;
                     };
                 }
 
-                // Keyboard Left/Right to change value of highlighted row
-                if !items.is_empty() {
-                    let sel_item = items[menu_selected];
-                    if is_key_pressed(KeyCode::Left) || is_key_pressed(KeyCode::A) {
-                        cycle_setting!(sel_item, false);
+                // Continuous Hold-to-Repeat for Keyboard Left/Right and Mouse `<` / `>` arrows
+                let mut held_dir: Option<i8> = None;
+                let mut held_item: Option<MenuItem> = None;
+
+                let kb_left = is_key_down(KeyCode::Left)
+                    || is_key_down(KeyCode::A)
+                    || is_key_pressed(KeyCode::Left)
+                    || is_key_pressed(KeyCode::A);
+                let kb_right = is_key_down(KeyCode::Right)
+                    || is_key_down(KeyCode::D)
+                    || is_key_pressed(KeyCode::Right)
+                    || is_key_pressed(KeyCode::D);
+
+                if is_mouse_button_pressed(MouseButton::Left)
+                    && !is_dragging_court_slider
+                    && !is_dragging_volume_slider
+                {
+                    active_menu_mouse_arrow = None;
+                    for layout in &layouts {
+                        if layout.left_arrow_rect.is_some_and(|r| r.contains(virt_mouse)) {
+                            if menu_selected != layout.index {
+                                menu_selected = layout.index;
+                                menu_hold.reset();
+                            }
+                            active_menu_mouse_arrow = Some((layout.item, -1));
+                            break;
+                        }
+                        if layout.right_arrow_rect.is_some_and(|r| r.contains(virt_mouse)) {
+                            if menu_selected != layout.index {
+                                menu_selected = layout.index;
+                                menu_hold.reset();
+                            }
+                            active_menu_mouse_arrow = Some((layout.item, 1));
+                            break;
+                        }
                     }
-                    if is_key_pressed(KeyCode::Right) || is_key_pressed(KeyCode::D) {
-                        cycle_setting!(sel_item, true);
+                } else if !is_mouse_button_down(MouseButton::Left) {
+                    active_menu_mouse_arrow = None;
+                }
+
+                if kb_left && !kb_right {
+                    held_dir = Some(-1);
+                    held_item = items.get(menu_selected).copied();
+                } else if kb_right && !kb_left {
+                    held_dir = Some(1);
+                    held_item = items.get(menu_selected).copied();
+                } else if let Some((locked_item, locked_dir)) = active_menu_mouse_arrow {
+                    if !is_dragging_court_slider && !is_dragging_volume_slider {
+                        if let Some(layout) = layouts.iter().find(|l| l.item == locked_item) {
+                            let target_rect = if locked_dir < 0 {
+                                layout.left_arrow_rect
+                            } else {
+                                layout.right_arrow_rect
+                            };
+                            if target_rect.is_some_and(|r| r.contains(virt_mouse)) {
+                                held_dir = Some(locked_dir);
+                                held_item = Some(locked_item);
+                            }
+                        }
                     }
                 }
 
-                // Slider dragging update
+                let repeat_interval = match held_item {
+                    Some(MenuItem::CourtSize) | Some(MenuItem::Volume) => Some(0.045),
+                    Some(MenuItem::GameMode)
+                    | Some(MenuItem::AiDifficulty)
+                    | Some(MenuItem::PointsToWin)
+                    | Some(MenuItem::Arena)
+                    | Some(MenuItem::P1Color)
+                    | Some(MenuItem::P2Color) => Some(0.14),
+                    _ => None,
+                };
+
+                if let Some(dir) = menu_hold.update(held_dir, frame_dt, 0.28, repeat_interval) {
+                    if let Some(item) = held_item {
+                        cycle_setting!(item, dir > 0);
+                        audio.play_ball_hit(0.18);
+                    }
+                }
+
+                if held_dir.is_none() && menu_config_dirty {
+                    config.save();
+                    menu_config_dirty = false;
+                }
+
+                // Slider dragging update (saves once on MouseButton::Left release)
                 if is_dragging_court_slider && is_mouse_button_down(MouseButton::Left) {
-                    if let Some(layout) = layouts.iter().find(|l| l.item == render::ui::MenuItem::CourtSize) {
+                    if let Some(layout) = layouts.iter().find(|l| l.item == MenuItem::CourtSize) {
                         if let Some(s_rect) = layout.slider_rect {
                             let factor = ((virt_mouse.x - s_rect.x) / s_rect.w).clamp(0.0, 1.0);
                             config.court_width_factor = (factor * 100.0).round() / 100.0;
                             config.court_size = (config.court_width_factor * 3.0).round() as usize;
-                            config.save();
+                        }
+                    }
+                }
+                if is_dragging_volume_slider && is_mouse_button_down(MouseButton::Left) {
+                    if let Some(layout) = layouts.iter().find(|l| l.item == MenuItem::Volume) {
+                        if let Some(s_rect) = layout.slider_rect {
+                            let factor = ((virt_mouse.x - s_rect.x) / s_rect.w).clamp(0.0, 1.0);
+                            config.volume = (factor * 100.0).round() / 100.0;
+                            audio.volume = config.volume;
+                            if config.volume > 0.0 && audio.is_muted {
+                                audio.is_muted = false;
+                                config.sound_muted = false;
+                            }
                         }
                     }
                 }
@@ -335,45 +625,43 @@ async fn main() {
                     for layout in &layouts {
                         let i = layout.index;
                         let item = layout.item;
-                        // 1. Check Left Arrow Button
-                        if let Some(l_rect) = layout.left_arrow_rect {
-                            if l_rect.contains(virt_mouse) {
-                                menu_selected = i;
-                                cycle_setting!(item, false);
-                                audio.play_ball_hit(0.2);
-                                continue;
-                            }
+                        // 1. Arrow buttons (handled by menu_hold above)
+                        if layout.left_arrow_rect.is_some_and(|r| r.contains(virt_mouse))
+                            || layout.right_arrow_rect.is_some_and(|r| r.contains(virt_mouse))
+                        {
+                            break;
                         }
-                        // 2. Check Right Arrow Button
-                        if let Some(r_rect) = layout.right_arrow_rect {
-                            if r_rect.contains(virt_mouse) {
-                                menu_selected = i;
-                                cycle_setting!(item, true);
-                                audio.play_ball_hit(0.2);
-                                continue;
-                            }
-                        }
-                        // 3. Check Slider Track (Schieberegler)
+                        // 2. Slider Track (Schieberegler)
                         if let Some(s_rect) = layout.slider_rect {
                             if s_rect.contains(virt_mouse) {
                                 menu_selected = i;
-                                is_dragging_court_slider = true;
                                 let factor = ((virt_mouse.x - s_rect.x) / s_rect.w).clamp(0.0, 1.0);
-                                config.court_width_factor = (factor * 100.0).round() / 100.0;
-                                config.court_size = (config.court_width_factor * 3.0).round() as usize;
-                                config.save();
+                                if item == MenuItem::CourtSize {
+                                    is_dragging_court_slider = true;
+                                    config.court_width_factor = (factor * 100.0).round() / 100.0;
+                                    config.court_size = (config.court_width_factor * 3.0).round() as usize;
+                                } else if item == MenuItem::Volume {
+                                    is_dragging_volume_slider = true;
+                                    config.volume = (factor * 100.0).round() / 100.0;
+                                    audio.volume = config.volume;
+                                    if config.volume > 0.0 && audio.is_muted {
+                                        audio.is_muted = false;
+                                        config.sound_muted = false;
+                                    }
+                                }
                                 audio.play_ball_hit(0.15);
-                                continue;
+                                break;
                             }
                         }
-                        // 4. Check Row Body (outside arrow buttons and slider)
+                        // 3. Row Body (outside arrow buttons and slider)
                         if layout.row_rect.contains(virt_mouse) {
                             menu_selected = i;
-                            if item == render::ui::MenuItem::PlayerProfile {
+                            if item == MenuItem::StartMatch {
+                                action_start_match = true;
+                            } else if item == MenuItem::PlayerProfile {
                                 action_open_profile = true;
                             } else {
-                                // Clicking the center label/body of ANY setting row confirms and starts match!
-                                action_start_match = true;
+                                audio.play_ball_hit(0.12);
                             }
                             break;
                         }
@@ -382,7 +670,7 @@ async fn main() {
 
                 // Keyboard Space or Enter confirms and starts match (or opens profile if profile row)
                 if is_key_pressed(KeyCode::Space) || is_key_pressed(KeyCode::Enter) {
-                    if menu_selected < items.len() && items[menu_selected] == render::ui::MenuItem::PlayerProfile {
+                    if menu_selected < items.len() && items[menu_selected] == MenuItem::PlayerProfile {
                         action_open_profile = true;
                     } else {
                         action_start_match = true;
@@ -390,34 +678,54 @@ async fn main() {
                 }
 
                 if is_key_pressed(KeyCode::Escape) {
+                    if menu_config_dirty {
+                        config.save();
+                        menu_config_dirty = false;
+                    }
+                    menu_hold.reset();
                     state = AppState::ExitConfirm;
                     audio.play_ball_hit(0.2);
                 }
 
                 if is_key_pressed(KeyCode::L) {
-                    let entries = fetch_leaderboard(
-                        config.matchmaking_registry_url.as_deref(),
-                        "month",
-                        &player1_name,
-                        config.glicko.rating,
-                        config.matches_won,
-                        config.matches_played,
-                    );
+                    if menu_config_dirty {
+                        config.save();
+                        menu_config_dirty = false;
+                    }
+                    menu_hold.reset();
+                    let reg_url = config.matchmaking_registry_url.clone();
+                    let pname = player1_name.clone();
+                    let rating = config.glicko.rating;
+                    let won = config.matches_won;
+                    let played = config.matches_played;
+                    let (tx, rx) = mpsc::channel();
+                    leaderboard_rx = Some(rx);
+                    std::thread::spawn(move || {
+                        let entries = fetch_leaderboard(reg_url.as_deref(), "month", &pname, rating, won, played);
+                        let _ = tx.send(entries);
+                    });
                     state = AppState::Leaderboard {
                         period_idx: 1,
-                        entries,
-                        is_refreshing: false,
+                        entries: Vec::new(),
+                        is_refreshing: true,
                     };
                     audio.play_ball_hit(0.3);
                 }
 
                 if action_open_profile {
+                    if menu_config_dirty {
+                        config.save();
+                        menu_config_dirty = false;
+                    }
+                    menu_hold.reset();
                     state = AppState::PlayerSetup {
                         is_two_player: game_mode == GameMode::TwoPlayerLocal,
                         active_field: 0,
                     };
                     audio.play_ball_hit(0.3);
                 } else if action_start_match {
+                    menu_hold.reset();
+                    menu_config_dirty = false;
                     save_config(
                         &mut config,
                         &player1_name,
@@ -435,6 +743,12 @@ async fn main() {
                     if left_theme == right_theme {
                         right_theme = right_theme.next();
                     }
+
+                    active_match_opponent = None;
+                    is_ranked_match = false;
+                    last_rating_update = None;
+                    last_point_scorer = None;
+                    cheer_timer = 0.0;
 
                     match game_mode {
                         GameMode::QuickMatch => {
@@ -454,8 +768,6 @@ async fn main() {
                             audio.play_ball_hit(0.3);
                         }
                         GameMode::SinglePlayer => {
-                            let (cpu_r, cpu_rd) = GlickoRating::ai_baseline(difficulty);
-                            active_match_opponent = Some((format!("CPU ({})", difficulty.name()), cpu_r, cpu_rd, "".to_string()));
                             logic = GameLogic::new(rule_mode, score_to_win);
                             let court_w = config.get_court_width(aspect);
                             physics = PhysicWorld::new_with_width(court_w);
@@ -470,7 +782,6 @@ async fn main() {
                             audio.play_whistle();
                         }
                         GameMode::TwoPlayerLocal => {
-                            active_match_opponent = None;
                             // Prompt player 2 name on starting 2-player mode
                             state = AppState::PlayerSetup {
                                 is_two_player: true,
@@ -479,27 +790,39 @@ async fn main() {
                             audio.play_ball_hit(0.3);
                         }
                         GameMode::HostOnline => {
-                            active_match_opponent = None;
-                            if let Ok(host) = NetworkHost::bind(DEFAULT_PORT, &player1_name, &config.country_code, arena.name()) {
+                            if let Ok(mut host) = NetworkHost::bind(DEFAULT_PORT, &player1_name, &config.country_code, arena.name()) {
+                                host.set_match_config(MatchConfigData {
+                                    score_to_win,
+                                    rule_mode_index: rule_mode.to_index(),
+                                    arena_index: arena.to_index(),
+                                    host_theme_index: left_theme.to_index(),
+                                    client_theme_index: right_theme.to_index(),
+                                    host_name: player1_name.clone(),
+                                    host_country: config.country_code.clone(),
+                                    host_rating: config.glicko.rating,
+                                });
                                 net_host = Some(host);
                                 state = AppState::HostLobby;
                             }
                         }
                         GameMode::JoinOnline => {
-                            active_match_opponent = None;
                             state = AppState::JoinScreen;
                         }
                         GameMode::ServerBrowser => {
-                            active_match_opponent = None;
-                            let servers = query_master_server();
+                            let reg_url = config.matchmaking_registry_url.clone();
+                            let (tx, rx) = mpsc::channel();
+                            server_browser_rx = Some(rx);
+                            std::thread::spawn(move || {
+                                let list = query_master_server_with_registry(reg_url.as_deref());
+                                let _ = tx.send(list);
+                            });
                             state = AppState::ServerBrowser {
                                 selected_idx: 0,
-                                servers,
-                                is_refreshing: false,
+                                servers: Vec::new(),
+                                is_refreshing: true,
                             };
                         }
                         GameMode::BotVsBot => {
-                            active_match_opponent = None;
                             logic = GameLogic::new(rule_mode, score_to_win);
                             let court_w = config.get_court_width(aspect);
                             physics = PhysicWorld::new_with_width(court_w);
@@ -544,71 +867,84 @@ async fn main() {
             }
 
             AppState::Leaderboard { ref mut period_idx, ref mut entries, ref mut is_refreshing } => {
-                let mut period_changed = false;
-
-                if is_key_pressed(KeyCode::Left) || is_key_pressed(KeyCode::A) {
-                    *period_idx = if *period_idx == 0 { 2 } else { *period_idx - 1 };
-                    period_changed = true;
-                }
-                if is_key_pressed(KeyCode::Right) || is_key_pressed(KeyCode::D) {
-                    *period_idx = (*period_idx + 1) % 3;
-                    period_changed = true;
-                }
-                if is_key_pressed(KeyCode::Key1) {
-                    *period_idx = 0;
-                    period_changed = true;
-                }
-                if is_key_pressed(KeyCode::Key2) {
-                    *period_idx = 1;
-                    period_changed = true;
-                }
-                if is_key_pressed(KeyCode::Key3) {
-                    *period_idx = 2;
-                    period_changed = true;
-                }
-
-                if is_mouse_button_pressed(MouseButton::Left) {
-                    let _card_w = 720.0;
-                    let card_h = 490.0;
-                    let card_y = (VIRTUAL_HEIGHT - card_h) * 0.5;
-                    let tab_w = 170.0;
-                    let tab_h = 28.0;
-                    let tab_spacing = 20.0;
-                    let start_tab_x = (VIRTUAL_WIDTH - (tab_w * 3.0 + tab_spacing * 2.0)) * 0.5;
-                    let tab_y = card_y + 74.0;
-
-                    for i in 0..3 {
-                        let tx = start_tab_x + i as f32 * (tab_w + tab_spacing);
-                        let tab_rect = Rect::new(tx, tab_y, tab_w, tab_h);
-                        if tab_rect.contains(virt_mouse) && *period_idx != i {
-                            *period_idx = i;
-                            period_changed = true;
-                            audio.play_ball_hit(0.2);
-                            break;
+                if let Some(ref rx) = leaderboard_rx {
+                    match rx.try_recv() {
+                        Ok(list) => {
+                            *entries = list;
+                            *is_refreshing = false;
+                            leaderboard_rx = None;
                         }
+                        Err(mpsc::TryRecvError::Disconnected) => {
+                            *is_refreshing = false;
+                            leaderboard_rx = None;
+                        }
+                        Err(mpsc::TryRecvError::Empty) => {}
                     }
                 }
 
-                if period_changed || is_key_pressed(KeyCode::R) {
+                let mut trigger_refresh = false;
+
+                if is_key_pressed(KeyCode::Left) || is_key_pressed(KeyCode::A) {
+                    *period_idx = if *period_idx == 0 { 2 } else { *period_idx - 1 };
+                    trigger_refresh = true;
+                }
+                if is_key_pressed(KeyCode::Right) || is_key_pressed(KeyCode::D) {
+                    *period_idx = (*period_idx + 1) % 3;
+                    trigger_refresh = true;
+                }
+                if is_key_pressed(KeyCode::Key1) {
+                    *period_idx = 0;
+                    trigger_refresh = true;
+                }
+                if is_key_pressed(KeyCode::Key2) {
+                    *period_idx = 1;
+                    trigger_refresh = true;
+                }
+                if is_key_pressed(KeyCode::Key3) {
+                    *period_idx = 2;
+                    trigger_refresh = true;
+                }
+
+                let (tab_rects, refresh_rect, back_rect) = get_leaderboard_rects();
+                let mut go_back = is_key_pressed(KeyCode::Escape);
+                if is_mouse_button_pressed(MouseButton::Left) {
+                    for (i, tab_rect) in tab_rects.iter().enumerate() {
+                        if tab_rect.contains(virt_mouse) && *period_idx != i {
+                            *period_idx = i;
+                            trigger_refresh = true;
+                            break;
+                        }
+                    }
+                    if refresh_rect.contains(virt_mouse) {
+                        trigger_refresh = true;
+                    } else if back_rect.contains(virt_mouse) {
+                        go_back = true;
+                    }
+                }
+
+                if !go_back && (trigger_refresh || is_key_pressed(KeyCode::R)) {
                     *is_refreshing = true;
                     let p_str = match *period_idx {
                         0 => "week",
                         1 => "month",
                         _ => "year",
                     };
-                    *entries = fetch_leaderboard(
-                        config.matchmaking_registry_url.as_deref(),
-                        p_str,
-                        &player1_name,
-                        config.glicko.rating,
-                        config.matches_won,
-                        config.matches_played,
-                    );
-                    *is_refreshing = false;
+                    let reg_url = config.matchmaking_registry_url.clone();
+                    let pname = player1_name.clone();
+                    let rating = config.glicko.rating;
+                    let won = config.matches_won;
+                    let played = config.matches_played;
+                    let (tx, rx) = mpsc::channel();
+                    leaderboard_rx = Some(rx);
+                    std::thread::spawn(move || {
+                        let list = fetch_leaderboard(reg_url.as_deref(), p_str, &pname, rating, won, played);
+                        let _ = tx.send(list);
+                    });
                     audio.play_ball_hit(0.2);
                 }
 
-                if is_key_pressed(KeyCode::Escape) {
+                if go_back {
+                    leaderboard_rx = None;
                     state = AppState::MainMenu;
                     audio.play_ball_hit(0.2);
                 }
@@ -617,6 +953,7 @@ async fn main() {
             AppState::PlayerSetup { is_two_player, mut active_field } => {
                 let country_field_idx = if is_two_player { 2 } else { 1 };
                 let total_fields = if is_two_player { 3 } else { 2 };
+                let setup_layout = get_player_setup_rects(is_two_player);
 
                 // Character input
                 while let Some(c) = get_char_pressed() {
@@ -650,7 +987,13 @@ async fn main() {
                     }
                 }
 
-                if is_key_pressed(KeyCode::Backspace) {
+                // Backspace with hold-to-repeat
+                let bs_held = if is_key_down(KeyCode::Backspace) || is_key_pressed(KeyCode::Backspace) {
+                    Some(-1)
+                } else {
+                    None
+                };
+                if backspace_hold.update(bs_held, frame_dt, 0.32, Some(0.045)).is_some() {
                     if active_field == 0 {
                         player1_name.pop();
                     } else if is_two_player && active_field == 1 {
@@ -668,20 +1011,88 @@ async fn main() {
                     }
                 }
 
-                // Country cycle on Left / Right when country field is active
+                // Country cycle with hold-to-repeat (keyboard Left/Right when active OR mouse holding `<`/`>`)
+                let mut country_dir_held: Option<i8> = None;
                 if active_field == country_field_idx {
-                    let mut c_idx = country_index(&config.country_code);
-                    if is_key_pressed(KeyCode::Left) {
-                        country_search_buf.clear();
-                        c_idx = (c_idx + AVAILABLE_COUNTRIES.len() - 1) % AVAILABLE_COUNTRIES.len();
-                        config.country_code = country_code_at(c_idx).to_string();
-                        audio.play_ball_hit(0.15);
+                    let kb_l = is_key_down(KeyCode::Left) || is_key_pressed(KeyCode::Left);
+                    let kb_r = is_key_down(KeyCode::Right) || is_key_pressed(KeyCode::Right);
+                    if kb_l && !kb_r {
+                        country_dir_held = Some(-1);
+                    } else if kb_r && !kb_l {
+                        country_dir_held = Some(1);
                     }
-                    if is_key_pressed(KeyCode::Right) {
+                }
+                if is_mouse_button_pressed(MouseButton::Left) {
+                    active_country_mouse_arrow = None;
+                    if setup_layout.country_left_arrow.contains(virt_mouse) {
+                        if active_field != country_field_idx {
+                            active_field = country_field_idx;
+                            state = AppState::PlayerSetup { is_two_player, active_field };
+                        }
+                        active_country_mouse_arrow = Some(-1);
+                    } else if setup_layout.country_right_arrow.contains(virt_mouse) {
+                        if active_field != country_field_idx {
+                            active_field = country_field_idx;
+                            state = AppState::PlayerSetup { is_two_player, active_field };
+                        }
+                        active_country_mouse_arrow = Some(1);
+                    }
+                } else if !is_mouse_button_down(MouseButton::Left) {
+                    active_country_mouse_arrow = None;
+                }
+
+                if country_dir_held.is_none() {
+                    if let Some(locked_dir) = active_country_mouse_arrow {
+                        let target_rect = if locked_dir < 0 {
+                            setup_layout.country_left_arrow
+                        } else {
+                            setup_layout.country_right_arrow
+                        };
+                        if target_rect.contains(virt_mouse) {
+                            country_dir_held = Some(locked_dir);
+                        }
+                    }
+                }
+
+                if let Some(dir) = country_hold.update(country_dir_held, frame_dt, 0.28, Some(0.045)) {
+                    country_search_buf.clear();
+                    let len = AVAILABLE_COUNTRIES.len();
+                    let mut c_idx = country_index(&config.country_code);
+                    c_idx = if dir < 0 {
+                        (c_idx + len - 1) % len
+                    } else {
+                        (c_idx + 1) % len
+                    };
+                    config.country_code = country_code_at(c_idx).to_string();
+                    audio.play_ball_hit(0.15);
+                }
+
+                // Mouse clicks on fields & buttons
+                let mut confirm_setup = false;
+                let mut cancel_setup = false;
+                if is_mouse_button_pressed(MouseButton::Left) {
+                    if setup_layout.country_left_arrow.contains(virt_mouse)
+                        || setup_layout.country_right_arrow.contains(virt_mouse)
+                    {
+                        // Handled by country_hold above
+                    } else if setup_layout.p1_rect.contains(virt_mouse) {
                         country_search_buf.clear();
-                        c_idx = (c_idx + 1) % AVAILABLE_COUNTRIES.len();
-                        config.country_code = country_code_at(c_idx).to_string();
-                        audio.play_ball_hit(0.15);
+                        active_field = 0;
+                        state = AppState::PlayerSetup { is_two_player, active_field };
+                        audio.play_ball_hit(0.12);
+                    } else if setup_layout.p2_rect.is_some_and(|r| r.contains(virt_mouse)) {
+                        country_search_buf.clear();
+                        active_field = 1;
+                        state = AppState::PlayerSetup { is_two_player, active_field };
+                        audio.play_ball_hit(0.12);
+                    } else if setup_layout.country_rect.contains(virt_mouse) {
+                        active_field = country_field_idx;
+                        state = AppState::PlayerSetup { is_two_player, active_field };
+                        audio.play_ball_hit(0.12);
+                    } else if setup_layout.confirm_btn.contains(virt_mouse) {
+                        confirm_setup = true;
+                    } else if setup_layout.cancel_btn.contains(virt_mouse) {
+                        cancel_setup = true;
                     }
                 }
 
@@ -697,8 +1108,23 @@ async fn main() {
                     state = AppState::PlayerSetup { is_two_player, active_field };
                 }
 
-                // Confirm and start match on Enter
                 if is_key_pressed(KeyCode::Enter) {
+                    confirm_setup = true;
+                }
+                if is_key_pressed(KeyCode::Escape) {
+                    cancel_setup = true;
+                }
+
+                if cancel_setup {
+                    country_hold.reset();
+                    backspace_hold.reset();
+                    country_search_buf.clear();
+                    state = AppState::MainMenu;
+                    audio.play_ball_hit(0.2);
+                } else if confirm_setup {
+                    country_hold.reset();
+                    backspace_hold.reset();
+                    country_search_buf.clear();
                     if player1_name.trim().is_empty() {
                         player1_name = "Player 1".to_string();
                     }
@@ -719,27 +1145,50 @@ async fn main() {
                         right_theme,
                     );
 
-                    // Launch match
-                    logic = GameLogic::new(rule_mode, score_to_win);
-                    let court_w = config.get_court_width(aspect);
-                    physics = PhysicWorld::new_with_width(court_w);
-                    physics.reset_players();
-                    physics.reset_ball(Some(PlayerSide::Left));
-                    logic.on_serve();
-                    bot_left = BotController::new(PlayerSide::Left, difficulty);
-                    bot_right = BotController::new(PlayerSide::Right, difficulty);
-                    bot_left.reset_rally();
-                    bot_right.reset_rally();
-                    state = AppState::Playing;
-                    audio.play_whistle();
-                }
-
-                if is_key_pressed(KeyCode::Escape) {
-                    state = AppState::MainMenu;
+                    if is_two_player || matches!(game_mode, GameMode::SinglePlayer | GameMode::TwoPlayerLocal | GameMode::BotVsBot) {
+                        active_match_opponent = None;
+                        is_ranked_match = false;
+                        last_rating_update = None;
+                        last_point_scorer = None;
+                        cheer_timer = 0.0;
+                        logic = GameLogic::new(rule_mode, score_to_win);
+                        let court_w = config.get_court_width(aspect);
+                        physics = PhysicWorld::new_with_width(court_w);
+                        physics.reset_players();
+                        physics.reset_ball(Some(PlayerSide::Left));
+                        logic.on_serve();
+                        bot_left = BotController::new(PlayerSide::Left, difficulty);
+                        bot_right = BotController::new(PlayerSide::Right, difficulty);
+                        bot_left.reset_rally();
+                        bot_right.reset_rally();
+                        state = AppState::Playing;
+                        audio.play_whistle();
+                    } else {
+                        state = AppState::MainMenu;
+                        audio.play_ball_hit(0.25);
+                    }
                 }
             }
 
             AppState::ServerBrowser { ref mut selected_idx, ref mut servers, ref mut is_refreshing } => {
+                if let Some(ref rx) = server_browser_rx {
+                    match rx.try_recv() {
+                        Ok(list) => {
+                            *servers = list;
+                            *is_refreshing = false;
+                            if *selected_idx >= servers.len() {
+                                *selected_idx = 0;
+                            }
+                            server_browser_rx = None;
+                        }
+                        Err(mpsc::TryRecvError::Disconnected) => {
+                            *is_refreshing = false;
+                            server_browser_rx = None;
+                        }
+                        Err(mpsc::TryRecvError::Empty) => {}
+                    }
+                }
+
                 let num_servers = servers.len();
                 if num_servers > 0 {
                     if is_key_pressed(KeyCode::Up) || is_key_pressed(KeyCode::W) {
@@ -750,23 +1199,61 @@ async fn main() {
                     }
                 }
 
-                if is_key_pressed(KeyCode::R) {
-                    *is_refreshing = true;
-                    *servers = query_master_server();
-                    *is_refreshing = false;
+                let (row_rects, refresh_rect, back_rect) = get_server_browser_rects(num_servers);
+                let mut do_refresh = is_key_pressed(KeyCode::R);
+                let mut do_connect = is_key_pressed(KeyCode::Enter) && num_servers > 0;
+                let mut do_back = is_key_pressed(KeyCode::Escape);
+
+                if is_mouse_button_pressed(MouseButton::Left) {
+                    let mut hit_row = false;
+                    for (i, r) in row_rects.iter().enumerate() {
+                        if r.contains(virt_mouse) {
+                            if *selected_idx == i {
+                                do_connect = true;
+                            } else {
+                                *selected_idx = i;
+                                audio.play_ball_hit(0.15);
+                            }
+                            hit_row = true;
+                            break;
+                        }
+                    }
+                    if !hit_row {
+                        if refresh_rect.contains(virt_mouse) {
+                            do_refresh = true;
+                        } else if back_rect.contains(virt_mouse) {
+                            do_back = true;
+                        }
+                    }
                 }
 
-                if is_key_pressed(KeyCode::Enter) && num_servers > 0 {
+                if do_refresh {
+                    *is_refreshing = true;
+                    let reg_url = config.matchmaking_registry_url.clone();
+                    let (tx, rx) = mpsc::channel();
+                    server_browser_rx = Some(rx);
+                    std::thread::spawn(move || {
+                        let list = query_master_server_with_registry(reg_url.as_deref());
+                        let _ = tx.send(list);
+                    });
+                    audio.play_ball_hit(0.2);
+                }
+
+                if do_connect && *selected_idx < servers.len() {
                     let s = &servers[*selected_idx];
                     join_ip_input = format!("{}:{}", s.host, s.port);
                     let mut client = NetworkClient::new();
-                    client.connect(&join_ip_input);
+                    client.connect_async(&join_ip_input);
                     net_client = Some(client);
+                    active_match_opponent = None;
+                    is_ranked_match = false;
+                    server_browser_rx = None;
                     state = AppState::JoinScreen;
-                }
-
-                if is_key_pressed(KeyCode::Escape) {
+                    audio.play_ball_hit(0.25);
+                } else if do_back {
+                    server_browser_rx = None;
                     state = AppState::MainMenu;
+                    audio.play_ball_hit(0.2);
                 }
             }
 
@@ -811,9 +1298,20 @@ async fn main() {
                                 if left_theme == right_theme {
                                     right_theme = right_theme.next();
                                 }
-                                if let Ok(host) = NetworkHost::bind(DEFAULT_PORT, &player1_name, &config.country_code, arena.name()) {
+                                if let Ok(mut host) = NetworkHost::bind(DEFAULT_PORT, &player1_name, &config.country_code, arena.name()) {
+                                    host.set_match_config(MatchConfigData {
+                                        score_to_win,
+                                        rule_mode_index: rule_mode.to_index(),
+                                        arena_index: arena.to_index(),
+                                        host_theme_index: left_theme.to_index(),
+                                        client_theme_index: right_theme.to_index(),
+                                        host_name: player1_name.clone(),
+                                        host_country: config.country_code.clone(),
+                                        host_rating: config.glicko.rating,
+                                    });
                                     net_host = Some(host);
                                     active_match_opponent = Some((opponent_name, opponent_rating, opponent_rd, opponent_country));
+                                    is_ranked_match = true;
                                     state = AppState::HostLobby;
                                 } else {
                                     state = AppState::MainMenu;
@@ -828,10 +1326,12 @@ async fn main() {
                                 if left_theme == right_theme {
                                     right_theme = right_theme.next();
                                 }
+                                join_ip_input = target_addr.clone();
                                 let mut client = NetworkClient::new();
-                                client.connect(&target_addr);
+                                client.connect_async(&target_addr);
                                 net_client = Some(client);
                                 active_match_opponent = Some((opponent_name, opponent_rating, opponent_rd, opponent_country));
+                                is_ranked_match = true;
                                 state = AppState::JoinScreen;
                                 cancel_search = true;
                             }
@@ -852,9 +1352,16 @@ async fn main() {
             AppState::HostLobby => {
                 if is_key_pressed(KeyCode::Escape) {
                     net_host = None;
+                    active_match_opponent = None;
+                    is_ranked_match = false;
                     state = AppState::MainMenu;
                 } else if let Some(ref mut host) = net_host {
                     host.update(global_time);
+                    if let Some((cname, ccountry, crating)) = host.client_hello.take() {
+                        if active_match_opponent.is_none() {
+                            active_match_opponent = Some((cname, crating, 100.0, ccountry));
+                        }
+                    }
                     if host.is_client_connected {
                         logic = GameLogic::new(rule_mode, score_to_win);
                         physics = PhysicWorld::new();
@@ -862,6 +1369,8 @@ async fn main() {
                         physics.reset_ball(Some(PlayerSide::Left));
                         logic.on_serve();
                         chat_log.clear();
+                        last_point_scorer = None;
+                        cheer_timer = 0.0;
                         state = AppState::Playing;
                         audio.play_whistle();
                     }
@@ -871,6 +1380,9 @@ async fn main() {
             AppState::JoinScreen => {
                 if is_key_pressed(KeyCode::Escape) {
                     net_client = None;
+                    active_match_opponent = None;
+                    is_ranked_match = false;
+                    backspace_hold.reset();
                     state = AppState::MainMenu;
                 } else {
                     while let Some(c) = get_char_pressed() {
@@ -878,19 +1390,22 @@ async fn main() {
                             join_ip_input.push(c);
                         }
                     }
-                    if is_key_pressed(KeyCode::Backspace) {
+                    let bs_held = if is_key_down(KeyCode::Backspace) || is_key_pressed(KeyCode::Backspace) {
+                        Some(-1)
+                    } else {
+                        None
+                    };
+                    if backspace_hold.update(bs_held, frame_dt, 0.32, Some(0.045)).is_some() {
                         join_ip_input.pop();
                     }
 
                     if is_key_pressed(KeyCode::Enter) {
-                        let mut client = NetworkClient::new();
-                        client.connect(&join_ip_input);
-                        if client.is_connected {
-                            net_client = Some(client);
-                            chat_log.clear();
-                            state = AppState::Playing;
-                            audio.play_whistle();
-                        } else {
+                        let is_already_connecting = net_client.as_ref().is_some_and(|c| c.is_connecting);
+                        if !is_already_connecting {
+                            is_ranked_match = false;
+                            active_match_opponent = None;
+                            let mut client = NetworkClient::new();
+                            client.connect_async(&join_ip_input);
                             net_client = Some(client);
                         }
                     }
@@ -898,7 +1413,24 @@ async fn main() {
                     if let Some(ref mut client) = net_client {
                         client.update();
                         if client.is_connected {
+                            client.send_hello(&player1_name, &config.country_code, config.glicko.rating);
+                            physics = PhysicWorld::new();
+                            logic = GameLogic::new(rule_mode, score_to_win);
+                            if let Some(cfg) = client.received_match_config.take() {
+                                score_to_win = cfg.score_to_win;
+                                rule_mode = RuleMode::from_index(cfg.rule_mode_index);
+                                logic = GameLogic::new(rule_mode, score_to_win);
+                                arena = ArenaType::from_index(cfg.arena_index);
+                                left_theme = BlobTheme::from_index(cfg.host_theme_index);
+                                right_theme = BlobTheme::from_index(cfg.client_theme_index);
+                                if active_match_opponent.is_none() {
+                                    active_match_opponent = Some((cfg.host_name, cfg.host_rating, 100.0, cfg.host_country));
+                                }
+                            }
                             chat_log.clear();
+                            last_point_scorer = None;
+                            cheer_timer = 0.0;
+                            backspace_hold.reset();
                             state = AppState::Playing;
                             audio.play_whistle();
                         }
@@ -910,13 +1442,16 @@ async fn main() {
                 // In-game Chat Handling
                 if is_typing_chat {
                     while let Some(c) = get_char_pressed() {
-                        if c.is_ascii_graphic() || c == ' ' {
-                            if chat_input.len() < 40 {
-                                chat_input.push(c);
-                            }
+                        if (c.is_ascii_graphic() || c == ' ') && chat_input.len() < 40 {
+                            chat_input.push(c);
                         }
                     }
-                    if is_key_pressed(KeyCode::Backspace) {
+                    let bs_held = if is_key_down(KeyCode::Backspace) || is_key_pressed(KeyCode::Backspace) {
+                        Some(-1)
+                    } else {
+                        None
+                    };
+                    if backspace_hold.update(bs_held, frame_dt, 0.32, Some(0.045)).is_some() {
                         chat_input.pop();
                     }
                     if is_key_pressed(KeyCode::Enter) && !chat_input.trim().is_empty() {
@@ -931,12 +1466,15 @@ async fn main() {
                             client.send_chat(my_name, &text);
                         }
                         chat_input.clear();
+                        backspace_hold.reset();
                         is_typing_chat = false;
                     } else if is_key_pressed(KeyCode::Escape) {
                         chat_input.clear();
+                        backspace_hold.reset();
                         is_typing_chat = false;
                     }
                 } else {
+                    backspace_hold.reset();
                     if is_key_pressed(KeyCode::T) || is_key_pressed(KeyCode::C) {
                         is_typing_chat = true;
                         chat_input.clear();
@@ -951,6 +1489,18 @@ async fn main() {
                 // Network Client update (Client Side)
                 if let Some(ref mut client) = net_client {
                     client.update();
+
+                    if let Some(cfg) = client.received_match_config.take() {
+                        score_to_win = cfg.score_to_win;
+                        rule_mode = RuleMode::from_index(cfg.rule_mode_index);
+                        logic = GameLogic::new(rule_mode, score_to_win);
+                        arena = ArenaType::from_index(cfg.arena_index);
+                        left_theme = BlobTheme::from_index(cfg.host_theme_index);
+                        right_theme = BlobTheme::from_index(cfg.client_theme_index);
+                        if active_match_opponent.is_none() {
+                            active_match_opponent = Some((cfg.host_name, cfg.host_rating, 100.0, cfg.host_country));
+                        }
+                    }
 
                     let my_input = input::read_player1_input(true);
                     client.send_input(my_input);
@@ -972,26 +1522,26 @@ async fn main() {
                         logic.serving_player = if net_state.serving_player == 0 { PlayerSide::Left } else { PlayerSide::Right };
                         logic.is_game_running = net_state.is_game_running;
                         logic.is_ball_valid = net_state.is_ball_valid;
+                    }
 
-                        for ev in &net_state.events {
-                            match ev {
-                                NetEvent::HitBlob { intensity, .. } => {
-                                    audio.play_ball_hit(*intensity);
-                                    vfx.spawn_hit_shockwave(physics.ball.pos, *intensity);
-                                    net_renderer.trigger_hit(*intensity * 0.3);
-                                }
-                                NetEvent::HitGround { .. } => {
-                                    audio.play_score();
-                                    vfx.spawn_sand_puff(Vec2::new(physics.ball.pos.x, GROUND_PLANE_HEIGHT_MAX), 8);
-                                }
-                                NetEvent::HitWall => audio.play_ball_hit(0.35),
-                                NetEvent::HitNet => {
-                                    audio.play_ball_hit(0.3);
-                                    net_renderer.trigger_hit(0.8);
-                                }
-                                NetEvent::ScorePoint => audio.play_score(),
-                                NetEvent::Whistle => audio.play_whistle(),
+                    for ev in client.take_events() {
+                        match ev {
+                            NetEvent::HitBlob { intensity, .. } => {
+                                audio.play_ball_hit(intensity);
+                                vfx.spawn_hit_shockwave(physics.ball.pos, intensity);
+                                net_renderer.trigger_hit(intensity * 0.3);
                             }
+                            NetEvent::HitGround { .. } => {
+                                audio.play_score();
+                                vfx.spawn_sand_puff(Vec2::new(physics.ball.pos.x, GROUND_PLANE_HEIGHT_MAX), 8);
+                            }
+                            NetEvent::HitWall => audio.play_ball_hit(0.35),
+                            NetEvent::HitNet => {
+                                audio.play_ball_hit(0.3);
+                                net_renderer.trigger_hit(0.8);
+                            }
+                            NetEvent::ScorePoint => audio.play_score(),
+                            NetEvent::Whistle => audio.play_whistle(),
                         }
                     }
 
@@ -1001,82 +1551,70 @@ async fn main() {
                     }
 
                     if let Some(winner) = logic.check_win() {
-                        if let Some((_, opp_r, opp_rd, _)) = active_match_opponent {
-                            let score = if winner == PlayerSide::Right { 1.0 } else { 0.0 };
-                            let old_r = config.glicko.rating;
-                            let new_rating = config.glicko.update_match(opp_r, opp_rd, score);
-                            config.matches_played += 1;
-                            if score == 1.0 {
-                                config.matches_won += 1;
+                        if is_ranked_match {
+                            if let Some((_, opp_r, opp_rd, _)) = active_match_opponent {
+                                let score = if winner == PlayerSide::Right { 1.0 } else { 0.0 };
+                                last_rating_update = Some(record_ranked_match_result(
+                                    &mut config,
+                                    &player1_name,
+                                    opp_r,
+                                    opp_rd,
+                                    score,
+                                ));
                             }
-                            config.glicko = new_rating;
-                            config.save();
-                            submit_leaderboard_rating(
-                                config.matchmaking_registry_url.as_deref(),
-                                "local_player",
-                                &player1_name,
-                                new_rating.rating,
-                                new_rating.deviation,
-                                config.matches_won,
-                                config.matches_played,
-                            );
-                            last_rating_update = Some((old_r, new_rating.rating, new_rating.rank_title()));
+                            is_ranked_match = false;
                         } else {
                             last_rating_update = None;
                         }
                         state = AppState::Victory(winner);
                         vfx.spawn_confetti_celebration(Vec2::new(400.0, 200.0), 90);
                         audio.play_score();
-                    }
-
-                    if !client.is_connected {
-                        if let Some((_, opp_r, opp_rd, _)) = active_match_opponent.take() {
-                            let old_r = config.glicko.rating;
-                            let new_rating = config.glicko.update_match(opp_r, opp_rd, 0.0);
-                            config.matches_played += 1;
-                            config.glicko = new_rating;
-                            config.save();
-                            submit_leaderboard_rating(
-                                config.matchmaking_registry_url.as_deref(),
-                                "local_player",
-                                &player1_name,
-                                new_rating.rating,
-                                new_rating.deviation,
-                                config.matches_won,
-                                config.matches_played,
-                            );
-                            last_rating_update = Some((old_r, new_rating.rating, new_rating.rank_title()));
+                    } else if !client.is_connected {
+                        if is_ranked_match {
+                            if let Some((_, opp_r, opp_rd, _)) = active_match_opponent.take() {
+                                last_rating_update = Some(record_ranked_match_result(
+                                    &mut config,
+                                    &player1_name,
+                                    opp_r,
+                                    opp_rd,
+                                    0.0,
+                                ));
+                            }
+                            is_ranked_match = false;
                         }
+                        active_match_opponent = None;
                         net_client = None;
                         state = AppState::MainMenu;
                     }
                 }
                 // Host / Local authoritative simulation
                 else {
+                    let mut host_disconnected_unranked = false;
                     let (p1_input, p2_input) = if let Some(ref mut host) = net_host {
                         host.update(global_time);
-                        if !host.is_client_connected && active_match_opponent.is_some() && logic.winning_player.is_none() {
-                            // Opponent disconnected/forfeited - host wins!
-                            if let Some((_, opp_r, opp_rd, _)) = active_match_opponent.take() {
-                                let old_r = config.glicko.rating;
-                                let new_rating = config.glicko.update_match(opp_r, opp_rd, 1.0);
-                                config.matches_played += 1;
-                                config.matches_won += 1;
-                                config.glicko = new_rating;
-                                config.save();
-                                submit_leaderboard_rating(
-                                    config.matchmaking_registry_url.as_deref(),
-                                    "local_player",
-                                    &player1_name,
-                                    new_rating.rating,
-                                    new_rating.deviation,
-                                    config.matches_won,
-                                    config.matches_played,
-                                );
-                                last_rating_update = Some((old_r, new_rating.rating, new_rating.rank_title()));
+                        if let Some((cname, ccountry, crating)) = host.client_hello.take() {
+                            if active_match_opponent.is_none() {
+                                active_match_opponent = Some((cname, crating, 100.0, ccountry));
                             }
-                            state = AppState::Victory(PlayerSide::Left);
-                            audio.play_score();
+                        }
+                        if !host.is_client_connected && logic.winning_player.is_none() {
+                            if is_ranked_match {
+                                // Opponent disconnected/forfeited - host wins!
+                                if let Some((_, opp_r, opp_rd, _)) = active_match_opponent {
+                                    last_rating_update = Some(record_ranked_match_result(
+                                        &mut config,
+                                        &player1_name,
+                                        opp_r,
+                                        opp_rd,
+                                        1.0,
+                                    ));
+                                }
+                                is_ranked_match = false;
+                                state = AppState::Victory(PlayerSide::Left);
+                                audio.play_score();
+                            } else {
+                                host_disconnected_unranked = true;
+                            }
                         }
                         for (sender, text) in host.new_chat_messages.drain(..) {
                             chat_log.push((sender, text, global_time));
@@ -1100,111 +1638,111 @@ async fn main() {
                         (p1, p2)
                     };
 
-                    physics_accumulator += frame_dt;
-                    while physics_accumulator >= PHYSICS_DT {
-                        physics_accumulator -= PHYSICS_DT;
+                    if host_disconnected_unranked {
+                        net_host = None;
+                        active_match_opponent = None;
+                        state = AppState::MainMenu;
+                    }
 
-                        physics.step(
-                            p1_input,
-                            p2_input,
-                            logic.is_ball_valid,
-                            logic.is_game_running,
-                        );
-                        logic.step(PHYSICS_DT);
+                    if state == AppState::Playing {
+                        physics_accumulator += frame_dt;
+                        while physics_accumulator >= PHYSICS_DT {
+                            physics_accumulator -= PHYSICS_DT;
 
-                        let events = physics.take_events();
+                            physics.step(
+                                p1_input,
+                                p2_input,
+                                logic.is_ball_valid,
+                                logic.is_game_running,
+                            );
+                            logic.step(PHYSICS_DT);
 
-                        if let Some(ref mut host) = net_host {
-                            host.send_game_state(&physics, &logic, &events);
-                        }
+                            let events = physics.take_events();
 
-                        for event in events {
-                            match event {
-                                MatchEvent::BallHitBlob { player, intensity } => {
-                                    let was_valid = logic.is_ball_valid;
-                                    logic.on_ball_hits_blob(player);
-                                    vfx.spawn_hit_shockwave(physics.ball.pos, intensity);
-                                    audio.play_ball_hit(intensity);
-                                    net_renderer.trigger_hit(intensity * 0.3);
-                                    if was_valid && !logic.is_ball_valid {
-                                        audio.play_whistle();
-                                        audio.play_score();
-                                        last_point_scorer = Some(player.opponent());
-                                        cheer_timer = 2.5;
+                            if let Some(ref mut host) = net_host {
+                                host.send_game_state(&physics, &logic, &events);
+                            }
+
+                            for event in events {
+                                match event {
+                                    MatchEvent::BallHitBlob { player, intensity } => {
+                                        let was_valid = logic.is_ball_valid;
+                                        logic.on_ball_hits_blob(player);
+                                        vfx.spawn_hit_shockwave(physics.ball.pos, intensity);
+                                        audio.play_ball_hit(intensity);
+                                        net_renderer.trigger_hit(intensity * 0.3);
+                                        if was_valid && !logic.is_ball_valid {
+                                            audio.play_whistle();
+                                            audio.play_score();
+                                            last_point_scorer = Some(player.opponent());
+                                            cheer_timer = 2.5;
+                                        }
                                     }
-                                }
-                                MatchEvent::BallHitGround { side } => {
-                                    let was_valid = logic.is_ball_valid;
-                                    logic.on_ball_hits_ground(side);
-                                    vfx.spawn_sand_puff(Vec2::new(physics.ball.pos.x, GROUND_PLANE_HEIGHT_MAX), 8);
-                                    if was_valid && !logic.is_ball_valid {
-                                        audio.play_whistle();
-                                        audio.play_score();
-                                        last_point_scorer = Some(side.opponent());
-                                        cheer_timer = 2.5;
+                                    MatchEvent::BallHitGround { side } => {
+                                        let was_valid = logic.is_ball_valid;
+                                        logic.on_ball_hits_ground(side);
+                                        vfx.spawn_sand_puff(Vec2::new(physics.ball.pos.x, GROUND_PLANE_HEIGHT_MAX), 8);
+                                        if was_valid && !logic.is_ball_valid {
+                                            audio.play_whistle();
+                                            audio.play_score();
+                                            last_point_scorer = Some(side.opponent());
+                                            cheer_timer = 2.5;
+                                        }
+                                        if !logic.is_ball_valid {
+                                            physics.ball.vel *= 0.6;
+                                        }
                                     }
-                                    if !logic.is_ball_valid {
-                                        physics.ball.vel *= 0.6;
+                                    MatchEvent::BallHitWall { side } => {
+                                        logic.on_ball_hits_wall(side);
+                                        audio.play_ball_hit(0.35);
                                     }
-                                }
-                                MatchEvent::BallHitWall { side } => {
-                                    logic.on_ball_hits_wall(side);
-                                    audio.play_ball_hit(0.35);
-                                }
-                                MatchEvent::BallHitNet { side } => {
-                                    logic.on_ball_hits_net(side);
-                                    net_renderer.trigger_hit(0.7);
-                                    audio.play_ball_hit(0.3);
-                                }
-                                MatchEvent::BallHitNetTop => {
-                                    logic.on_ball_hits_net(PlayerSide::Left);
-                                    net_renderer.trigger_hit(1.0);
-                                    audio.play_ball_hit(0.4);
-                                }
-                                MatchEvent::BallCrossedNet { new_side } => {
-                                    logic.on_ball_crosses_net(new_side);
+                                    MatchEvent::BallHitNet { side } => {
+                                        logic.on_ball_hits_net(side);
+                                        net_renderer.trigger_hit(0.7);
+                                        audio.play_ball_hit(0.3);
+                                    }
+                                    MatchEvent::BallHitNetTop => {
+                                        logic.on_ball_hits_net(PlayerSide::Left);
+                                        net_renderer.trigger_hit(1.0);
+                                        audio.play_ball_hit(0.4);
+                                    }
+                                    MatchEvent::BallCrossedNet { new_side } => {
+                                        logic.on_ball_crosses_net(new_side);
+                                    }
                                 }
                             }
-                        }
 
-                        if logic.can_start_round(&physics) {
-                            if let Some(winner) = logic.winning_player {
-                                if let Some((_, opp_r, opp_rd, _)) = active_match_opponent {
-                                    let score = if winner == PlayerSide::Left { 1.0 } else { 0.0 };
-                                    let old_r = config.glicko.rating;
-                                    let new_rating = config.glicko.update_match(opp_r, opp_rd, score);
-                                    config.matches_played += 1;
-                                    if score == 1.0 {
-                                        config.matches_won += 1;
+                            if logic.can_start_round(&physics) {
+                                if let Some(winner) = logic.winning_player {
+                                    if is_ranked_match {
+                                        if let Some((_, opp_r, opp_rd, _)) = active_match_opponent {
+                                            let score = if winner == PlayerSide::Left { 1.0 } else { 0.0 };
+                                            last_rating_update = Some(record_ranked_match_result(
+                                                &mut config,
+                                                &player1_name,
+                                                opp_r,
+                                                opp_rd,
+                                                score,
+                                            ));
+                                        }
+                                        is_ranked_match = false;
+                                    } else {
+                                        last_rating_update = None;
                                     }
-                                    config.glicko = new_rating;
-                                    config.save();
-                                    submit_leaderboard_rating(
-                                        config.matchmaking_registry_url.as_deref(),
-                                        "local_player",
-                                        &player1_name,
-                                        new_rating.rating,
-                                        new_rating.deviation,
-                                        config.matches_won,
-                                        config.matches_played,
-                                    );
-                                    last_rating_update = Some((old_r, new_rating.rating, new_rating.rank_title()));
-                                } else {
-                                    last_rating_update = None;
-                                }
 
-                                state = AppState::Victory(winner);
-                                vfx.spawn_confetti_celebration(Vec2::new(400.0, 200.0), 90);
-                                audio.play_score();
-                                break;
-                            } else {
-                                physics.reset_ball(Some(logic.serving_player));
-                                logic.on_serve();
-                                bot_left.reset_rally();
-                                bot_right.reset_rally();
-                                audio.play_whistle();
-                                if net_host.is_some() || net_client.is_some() {
-                                    online_serve_countdown = Some(7.0);
+                                    state = AppState::Victory(winner);
+                                    vfx.spawn_confetti_celebration(Vec2::new(400.0, 200.0), 90);
+                                    audio.play_score();
+                                    break;
+                                } else {
+                                    physics.reset_ball(Some(logic.serving_player));
+                                    logic.on_serve();
+                                    bot_left.reset_rally();
+                                    bot_right.reset_rally();
+                                    audio.play_whistle();
+                                    if net_host.is_some() || net_client.is_some() {
+                                        online_serve_countdown = Some(7.0);
+                                    }
                                 }
                             }
                         }
@@ -1217,62 +1755,199 @@ async fn main() {
             }
 
             AppState::Paused => {
-                if is_key_pressed(KeyCode::Escape) {
-                    state = AppState::Playing;
-                }
-                if is_key_pressed(KeyCode::Up) || is_key_pressed(KeyCode::W) {
-                    pause_selected = if pause_selected == 0 { 2 } else { pause_selected - 1 };
-                }
-                if is_key_pressed(KeyCode::Down) || is_key_pressed(KeyCode::S) {
-                    pause_selected = (pause_selected + 1) % 3;
-                }
-                if is_key_pressed(KeyCode::Space) || is_key_pressed(KeyCode::Enter) {
-                    match pause_selected {
-                        0 => state = AppState::Playing,
-                        1 => {
-                            logic.reset_match();
-                            physics.reset_players();
-                            physics.reset_ball(Some(PlayerSide::Left));
-                            logic.on_serve();
-                            bot_left.reset_rally();
-                            bot_right.reset_rally();
-                            state = AppState::Playing;
-                            audio.play_whistle();
+                // Keep online network connections alive while paused
+                if let Some(ref mut host) = net_host {
+                    host.update(global_time);
+                    if let Some((cname, ccountry, crating)) = host.client_hello.take() {
+                        if active_match_opponent.is_none() {
+                            active_match_opponent = Some((cname, crating, 100.0, ccountry));
                         }
-                        2 => {
-                            // Abandonment penalty for online match forfeit
-                            if (net_host.is_some() || net_client.is_some()) && active_match_opponent.is_some() {
-                                if let Some((_, opp_r, opp_rd, _)) = active_match_opponent.take() {
-                                    let old_r = config.glicko.rating;
-                                    let new_rating = config.glicko.update_match(opp_r, opp_rd, 0.0);
-                                    config.matches_played += 1;
-                                    config.glicko = new_rating;
-                                    config.save();
-                                    submit_leaderboard_rating(
-                                        config.matchmaking_registry_url.as_deref(),
-                                        "local_player",
-                                        &player1_name,
-                                        new_rating.rating,
-                                        new_rating.deviation,
-                                        config.matches_won,
-                                        config.matches_played,
-                                    );
-                                    last_rating_update = Some((old_r, new_rating.rating, new_rating.rank_title()));
-                                }
+                    }
+                    for (sender, text) in host.new_chat_messages.drain(..) {
+                        chat_log.push((sender, text, global_time));
+                    }
+                    if !host.is_client_connected && logic.winning_player.is_none() {
+                        if is_ranked_match {
+                            if let Some((_, opp_r, opp_rd, _)) = active_match_opponent {
+                                last_rating_update = Some(record_ranked_match_result(
+                                    &mut config,
+                                    &player1_name,
+                                    opp_r,
+                                    opp_rd,
+                                    1.0,
+                                ));
                             }
+                            is_ranked_match = false;
+                            state = AppState::Victory(PlayerSide::Left);
+                            audio.play_score();
+                        } else {
                             net_host = None;
-                            net_client = None;
+                            active_match_opponent = None;
                             state = AppState::MainMenu;
                         }
-                        _ => {}
+                    }
+                } else if let Some(ref mut client) = net_client {
+                    client.update();
+                    let _ = client.take_events();
+                    for (sender, text) in client.new_chat_messages.drain(..) {
+                        chat_log.push((sender, text, global_time));
+                    }
+                    if !client.is_connected {
+                        if is_ranked_match {
+                            if let Some((_, opp_r, opp_rd, _)) = active_match_opponent.take() {
+                                last_rating_update = Some(record_ranked_match_result(
+                                    &mut config,
+                                    &player1_name,
+                                    opp_r,
+                                    opp_rd,
+                                    0.0,
+                                ));
+                            }
+                            is_ranked_match = false;
+                        }
+                        active_match_opponent = None;
+                        net_client = None;
+                        state = AppState::MainMenu;
+                    }
+                }
+
+                if state == AppState::Paused {
+                    let is_online = net_host.is_some() || net_client.is_some();
+                    if is_online && pause_selected == 1 {
+                        pause_selected = 0;
+                    }
+
+                    if is_key_pressed(KeyCode::Escape) {
+                        state = AppState::Playing;
+                    }
+                    if is_key_pressed(KeyCode::Up) || is_key_pressed(KeyCode::W) {
+                        pause_selected = if is_online {
+                            if pause_selected == 0 { 2 } else { 0 }
+                        } else if pause_selected == 0 {
+                            2
+                        } else {
+                            pause_selected - 1
+                        };
+                    }
+                    if is_key_pressed(KeyCode::Down) || is_key_pressed(KeyCode::S) {
+                        pause_selected = if is_online {
+                            if pause_selected == 0 { 2 } else { 0 }
+                        } else {
+                            (pause_selected + 1) % 3
+                        };
+                    }
+
+                    let mut triggered_action: Option<usize> = None;
+                    if is_mouse_button_pressed(MouseButton::Left) {
+                        for (id, rect) in get_pause_button_rects(is_online) {
+                            if rect.contains(virt_mouse) {
+                                pause_selected = id;
+                                triggered_action = Some(id);
+                                break;
+                            }
+                        }
+                    }
+                    if is_key_pressed(KeyCode::Space) || is_key_pressed(KeyCode::Enter) {
+                        triggered_action = Some(pause_selected);
+                    }
+
+                    if let Some(action_id) = triggered_action {
+                        match action_id {
+                            0 => state = AppState::Playing,
+                            1 if !is_online => {
+                                logic.reset_match();
+                                physics.reset_players();
+                                physics.reset_ball(Some(PlayerSide::Left));
+                                logic.on_serve();
+                                bot_left.reset_rally();
+                                bot_right.reset_rally();
+                                last_point_scorer = None;
+                                cheer_timer = 0.0;
+                                state = AppState::Playing;
+                                audio.play_whistle();
+                            }
+                            2 => {
+                                // Abandonment penalty for ranked online match forfeit
+                                if is_online && is_ranked_match {
+                                    if let Some((_, opp_r, opp_rd, _)) = active_match_opponent.take() {
+                                        last_rating_update = Some(record_ranked_match_result(
+                                            &mut config,
+                                            &player1_name,
+                                            opp_r,
+                                            opp_rd,
+                                            0.0,
+                                        ));
+                                    }
+                                    is_ranked_match = false;
+                                }
+                                active_match_opponent = None;
+                                net_host = None;
+                                net_client = None;
+                                state = AppState::MainMenu;
+                            }
+                            _ => {}
+                        }
                     }
                 }
             }
 
             AppState::Victory(_) => {
                 vfx.update(frame_dt);
-                if is_key_pressed(KeyCode::Space) || is_key_pressed(KeyCode::Enter) || is_key_pressed(KeyCode::Escape) {
+                let allow_rematch = net_host.is_none()
+                    && net_client.is_none()
+                    && matches!(game_mode, GameMode::SinglePlayer | GameMode::TwoPlayerLocal | GameMode::BotVsBot);
+                let (rematch_rect_opt, menu_rect) = get_victory_button_rects(last_rating_update.is_some(), allow_rematch);
+
+                let mut do_rematch = false;
+                let mut do_menu = false;
+
+                if allow_rematch {
+                    if is_key_pressed(KeyCode::Enter) || is_key_pressed(KeyCode::Space) || is_key_pressed(KeyCode::R) {
+                        do_rematch = true;
+                    } else if is_key_pressed(KeyCode::Escape) {
+                        do_menu = true;
+                    }
+                } else if is_key_pressed(KeyCode::Space) || is_key_pressed(KeyCode::Enter) || is_key_pressed(KeyCode::Escape) {
+                    do_menu = true;
+                }
+
+                if is_mouse_button_pressed(MouseButton::Left) {
+                    if let Some(r_rect) = rematch_rect_opt {
+                        if r_rect.contains(virt_mouse) {
+                            do_rematch = true;
+                        }
+                    }
+                    if menu_rect.contains(virt_mouse) {
+                        do_menu = true;
+                    }
+                }
+
+                if do_rematch {
+                    logic = GameLogic::new(rule_mode, score_to_win);
+                    let court_w = config.get_court_width(aspect);
+                    physics = PhysicWorld::new_with_width(court_w);
+                    physics.reset_players();
+                    physics.reset_ball(Some(PlayerSide::Left));
+                    logic.on_serve();
+                    bot_left = BotController::new(PlayerSide::Left, difficulty);
+                    bot_right = BotController::new(PlayerSide::Right, difficulty);
+                    bot_left.reset_rally();
+                    bot_right.reset_rally();
+                    last_rating_update = None;
+                    last_point_scorer = None;
+                    cheer_timer = 0.0;
+                    state = AppState::Playing;
+                    audio.play_whistle();
+                } else if do_menu {
+                    net_host = None;
+                    net_client = None;
+                    active_match_opponent = None;
+                    is_ranked_match = false;
+                    last_rating_update = None;
+                    last_point_scorer = None;
+                    cheer_timer = 0.0;
                     state = AppState::MainMenu;
+                    audio.play_ball_hit(0.2);
                 }
             }
         }
@@ -1415,6 +2090,8 @@ async fn main() {
                     left_theme,
                     right_theme,
                     config.high_ball_camera,
+                    config.volume,
+                    audio.is_muted,
                     fullscreen,
                     menu_selected,
                     Some(virt_mouse),
@@ -1438,21 +2115,32 @@ async fn main() {
                     left_theme,
                     right_theme,
                     config.high_ball_camera,
+                    config.volume,
+                    audio.is_muted,
                     fullscreen,
                     menu_selected,
                     Some(virt_mouse),
                     global_time,
                 );
-                render_exit_confirm(global_time);
+                render_exit_confirm(Some(virt_mouse), global_time);
             }
             AppState::Leaderboard { period_idx, ref entries, is_refreshing } => {
-                render_leaderboard(period_idx, entries, &player1_name, is_refreshing, global_time);
+                render_leaderboard(period_idx, entries, &player1_name, is_refreshing, Some(virt_mouse), global_time);
             }
             AppState::PlayerSetup { is_two_player, active_field } => {
-                render_player_setup(&player1_name, &config.country_code, &player2_name, is_two_player, active_field, &country_search_buf, global_time);
+                render_player_setup(
+                    &player1_name,
+                    &config.country_code,
+                    &player2_name,
+                    is_two_player,
+                    active_field,
+                    &country_search_buf,
+                    Some(virt_mouse),
+                    global_time,
+                );
             }
             AppState::ServerBrowser { selected_idx, ref servers, is_refreshing } => {
-                render_server_browser(servers, selected_idx, is_refreshing, global_time);
+                render_server_browser(servers, selected_idx, is_refreshing, Some(virt_mouse), global_time);
             }
             AppState::MatchmakingQueue => {
                 let (rating, tol, elapsed, range_mode, cross_offer, challenges) = if let Some(ref agent) = quick_match_agent {
@@ -1482,71 +2170,28 @@ async fn main() {
                 );
             }
             AppState::HostLobby => {
-                let is_connected = net_host.as_ref().map_or(false, |h| h.is_client_connected);
+                let is_connected = net_host.as_ref().is_some_and(|h| h.is_client_connected);
                 let room_name = net_host.as_ref().map_or("Match", |h| &h.room_name);
                 let host_local_ip = net_host.as_ref().map_or(local_ip.as_str(), |h| &h.local_ip);
                 let public_ep = net_host.as_ref().and_then(|h| h.public_endpoint.as_deref());
                 render_host_lobby(room_name, DEFAULT_PORT, host_local_ip, public_ep, is_connected, global_time);
             }
             AppState::JoinScreen => {
-                let is_connecting = net_client.as_ref().map_or(false, |c| c.is_connecting);
+                let is_connecting = net_client.as_ref().is_some_and(|c| c.is_connecting);
                 let err = net_client.as_ref().and_then(|c| c.error_message.as_deref());
                 render_join_screen(&join_ip_input, is_connecting, err, global_time);
             }
             AppState::Playing => {
-                let left_title = if net_host.is_some() {
-                    if config.country_code.is_empty() {
-                        format!("{} [{:.0}] (Host)", player1_name, config.glicko.rating)
-                    } else {
-                        format!("{} {} [{:.0}] (Host)", country_badge(&config.country_code), player1_name, config.glicko.rating)
-                    }
-                } else if net_client.is_some() {
-                    if let Some((ref opp_name, opp_r, _, ref opp_c)) = active_match_opponent {
-                        if opp_c.is_empty() {
-                            format!("{} [{:.0}]", opp_name, opp_r)
-                        } else {
-                            format!("{} {} [{:.0}]", country_badge(opp_c), opp_name, opp_r)
-                        }
-                    } else {
-                        "Host (P1)".to_string()
-                    }
-                } else {
-                    match game_mode {
-                        GameMode::BotVsBot => format!("CPU 1 [{:.0}]", GlickoRating::ai_baseline(difficulty).0),
-                        _ => {
-                            if config.country_code.is_empty() {
-                                format!("{} [{:.0}]", player1_name, config.glicko.rating)
-                            } else {
-                                format!("{} {} [{:.0}]", country_badge(&config.country_code), player1_name, config.glicko.rating)
-                            }
-                        }
-                    }
-                };
-
-                let right_title = if net_host.is_some() {
-                    if let Some((ref opp_name, opp_r, _, ref opp_c)) = active_match_opponent {
-                        if opp_c.is_empty() {
-                            format!("{} [{:.0}]", opp_name, opp_r)
-                        } else {
-                            format!("{} {} [{:.0}]", country_badge(opp_c), opp_name, opp_r)
-                        }
-                    } else {
-                        "Client (P2)".to_string()
-                    }
-                } else if net_client.is_some() {
-                    if config.country_code.is_empty() {
-                        format!("{} [{:.0}] (You)", player1_name, config.glicko.rating)
-                    } else {
-                        format!("{} {} [{:.0}] (You)", country_badge(&config.country_code), player1_name, config.glicko.rating)
-                    }
-                } else {
-                    match game_mode {
-                        GameMode::SinglePlayer => format!("CPU ({}) [{:.0}]", difficulty.name(), GlickoRating::ai_baseline(difficulty).0),
-                        GameMode::TwoPlayerLocal => player2_name.clone(),
-                        GameMode::BotVsBot => format!("CPU 2 ({}) [{:.0}]", difficulty.name(), GlickoRating::ai_baseline(difficulty).0),
-                        _ => player2_name.clone(),
-                    }
-                };
+                let (left_title, right_title) = format_hud_titles(
+                    &net_host,
+                    &net_client,
+                    &active_match_opponent,
+                    game_mode,
+                    &player1_name,
+                    &player2_name,
+                    &config,
+                    difficulty,
+                );
 
                 render_hud(
                     &logic,
@@ -1564,15 +2209,20 @@ async fn main() {
                 render_chat_overlay(&chat_log, is_typing_chat, &chat_input, global_time);
             }
             AppState::Paused => {
-                let r_name = if game_mode == GameMode::SinglePlayer {
-                    format!("CPU ({})", difficulty.name())
-                } else {
-                    player2_name.clone()
-                };
+                let (left_title, right_title) = format_hud_titles(
+                    &net_host,
+                    &net_client,
+                    &active_match_opponent,
+                    game_mode,
+                    &player1_name,
+                    &player2_name,
+                    &config,
+                    difficulty,
+                );
                 render_hud(
                     &logic,
-                    &player1_name,
-                    &r_name,
+                    &left_title,
+                    &right_title,
                     left_theme,
                     right_theme,
                     physics.ball.pos,
@@ -1581,13 +2231,19 @@ async fn main() {
                     None,
                     physics.court_width,
                 );
-                render_pause_menu(pause_selected);
+                let is_online = net_host.is_some() || net_client.is_some();
+                render_pause_menu(pause_selected, is_online, Some(virt_mouse));
             }
             AppState::Victory(winner) => {
+                let allow_rematch = net_host.is_none()
+                    && net_client.is_none()
+                    && matches!(game_mode, GameMode::SinglePlayer | GameMode::TwoPlayerLocal | GameMode::BotVsBot);
                 let winner_name = match winner {
                     PlayerSide::Left => {
                         if net_client.is_some() {
                             active_match_opponent.as_ref().map(|(n, _, _, _)| n.as_str()).unwrap_or("Host")
+                        } else if game_mode == GameMode::BotVsBot && net_host.is_none() {
+                            "CPU 1"
                         } else {
                             &player1_name
                         }
@@ -1599,12 +2255,22 @@ async fn main() {
                             opp_name.as_str()
                         } else if game_mode == GameMode::SinglePlayer {
                             "Computer"
+                        } else if game_mode == GameMode::BotVsBot {
+                            "CPU 2"
                         } else {
                             &player2_name
                         }
                     }
                 };
-                render_victory_screen(winner, winner_name, &logic, last_rating_update, global_time);
+                render_victory_screen(
+                    winner,
+                    winner_name,
+                    &logic,
+                    last_rating_update,
+                    allow_rematch,
+                    Some(virt_mouse),
+                    global_time,
+                );
             }
         }
 

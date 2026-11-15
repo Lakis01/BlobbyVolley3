@@ -1,8 +1,8 @@
 [Desktop Entry]
 Type=Application
-Name=Blobby Volley 3 (Remastered)
+Name=Blobby Volley 3
 GenericName=Arcade Volleyball Game
-Comment=Blobby Volley 3 - Remastered 2026 Edition in Rust
+Comment=Unofficial Rust rewrite and remaster of Blobby Volley 2
 Exec=blobby
 Icon=blobby
 Terminal=false

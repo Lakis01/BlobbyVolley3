@@ -684,11 +684,11 @@ pub fn estimate_x_at_y(
         let dist = (pos - net_pos).length();
         let total_radius = BALL_RADIUS + NET_RADIUS;
         if dist < total_radius {
-            let normal = (net_pos - pos).normalize();
+            let normal = (net_pos - pos).try_normalize().unwrap_or(Vec2::ZERO);
             let perp = normal.dot(vel);
             let para_sq = vel.length_squared() - perp * perp;
             let speed = (perp * perp * 0.7 + para_sq * 0.9).max(0.0).sqrt();
-            vel = (vel - normal * (2.0 * normal.dot(vel))).normalize() * speed;
+            vel = (vel - normal * (2.0 * normal.dot(vel))).try_normalize().unwrap_or(Vec2::ZERO) * speed;
             pos = net_pos - normal * total_radius;
         }
 
@@ -710,4 +710,21 @@ pub fn estimate_x_at_y(
 #[allow(dead_code)]
 pub fn estimate_ball_trajectory(ball_pos: Vec2, ball_vel: Vec2, target_y: f32) -> Option<(f32, f32, f32)> {
     estimate_x_at_y(ball_pos, ball_vel, target_y, true, 800.0)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_estimate_x_at_y_zero_length_vector_no_nan() {
+        // Place ball directly at net cap center with zero velocity
+        let net_center = Vec2::new(400.0, NET_SPHERE_POSITION);
+        let res = estimate_x_at_y(net_center, Vec2::ZERO, 379.5, true, 800.0);
+        if let Some((x, vx, t)) = res {
+            assert!(!x.is_nan(), "x must not be NaN");
+            assert!(!vx.is_nan(), "vx must not be NaN");
+            assert!(!t.is_nan(), "t must not be NaN");
+        }
+    }
 }

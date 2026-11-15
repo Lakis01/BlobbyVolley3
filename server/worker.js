@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 // Blobby Volley 3 - Zero-Cost Serverless Matchmaking Registry & Glicko-2 Queue (Cloudflare Worker)
 // Deploy in 30 seconds for $0/mo:
 //   npm install -g wrangler
@@ -319,7 +320,7 @@ export default {
 
         const room = {
           id: body.id,
-          name: body.name || 'Remastered Court',
+          name: body.name || 'Blobby Court',
           host: body.host || 'Player',
           endpoint: body.endpoint,
           arena: body.arena || 'Copacabana Sunset',
@@ -470,7 +471,7 @@ export default {
     return new Response(JSON.stringify({
       service: 'Blobby Volley 3 Serverless Matchmaking API',
       status: 'operational',
-      version: '3.2.0',
+      version: '3.4.0',
       routes: [
         'POST /matchmaking/queue',
         'GET /matchmaking/poll?player_id=...',

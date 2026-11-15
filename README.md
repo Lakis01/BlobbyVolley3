@@ -1,65 +1,93 @@
-# Blobby Volley 3 (Remastered)
+# Blobby Volley 3
 
-A modern, high-performance port and complete visual remaster of the legendary **Blobby Volley** head-to-head multiplayer volleyball game, rewritten in **Rust** for Linux and modern platforms.
+Unofficial Rust rewrite and remaster of [danielknobe/blobbyvolley2](https://github.com/danielknobe/blobbyvolley2).
 
----
+![Blobby Volley 3 Gameplay](assets/screenshot.png)
 
-## Copyright & Attribution
-
-Blobby Volley 3 (Remastered) is a modern Rust port and remaster of **Blobby Volley 2**, originally created by Daniel Knobe and the Blobby Volley Community ([github.com/danielknobe/blobbyvolley2](https://github.com/danielknobe/blobbyvolley2)).
-
-- **License**: GNU General Public License v2.0 ([GPL-2.0](COPYING))
-- **Original Authors & Heritage**: Daniel Knobe, Silvio Mummert, and the Blobby Volley 2 Contributors.
-- All original game assets, physics constants, sound effects (encoded in Opus 100 kbps), and tournament rules are preserved and remastered in full compliance with the GNU GPL v2.0.
+A fast, native, cross-platform head-to-head beach volleyball game: GPL-licensed, dependency-light,
+and built on `macroquad` + `glam`. Everything from the original Blobby Volley 2 — the physics,
+the bots, the sounds — has been ported, and everything around it has been rebuilt.
 
 ---
 
-## 2026 Remaster Highlights
+## What's New vs. Blobby Volley 2
 
-### 1. Visual Overhaul & Arenas
-- **6 Hand-Crafted Arenas**:
-  1. **Copacabana Sunset Beach**: Multi-layer sunset sky gradient, giant glowing sun with lens bloom, parallax drifting clouds, animated ocean waves with sunlight caustics and cresting foam, and swaying tropical palm trees.
-  2. **Neo Cyber Stadium**: Synthwave wireframe sun, cyberpunk skyline, perspective neon grid floor, and pulsating laser net.
-  3. **Classic Beach HD**: Ultra-crisp modern tribute to the nostalgic Blobby Volley 1/2 sunny beach.
-  4. **Alpine Peaks (Snow)**: Majestic snow-capped mountain peaks, pine tree silhouettes, and drifting procedural snowflakes.
-  5. **Magma Caldera (Volcano)**: Glowing lava lakes, volcanic crater horizon, rising heat shimmer, and floating ember particles.
-  6. **Orbital Station (Space)**: Deep space starfield, glowing blue Earth curvature, orbital solar arrays, and high-tech containment court.
-- **Open-Source Perimeter Advertising Boards**:
-  - In the spirit of the original game's Linux distro banners, the court perimeter boards showcase prominent open-source software and Linux projects: **Arch Linux**, **Debian**, **Fedora**, **CachyOS**, **KDE Plasma**, **Rust**, **Godot Engine**, **Blender**, **FFmpeg**, **VLC**, **Git**, and **Neovim**.
-- **Procedural Organic Jelly Blobbies**:
-  - Volume-preserving squash-and-stretch spring dynamics on jumping, landing, and ball strikes. Translucent gelatin shading with specular gloss highlights and contact sand shadows.
-- **Animated Expressive Eyes**:
-  - Real-time pupil tracking that dynamically watches the volleyball wherever it flies across the net, plus natural blinking and reaction expressions.
-- **3D-Shaded Volleyball & VFX**:
-  - Smooth continuous rotation with authentic multi-color panels, dynamic ground shadow scaling with height, fiery/electric motion trail ribbons when spiked, sand puffs on impact, shockwave rings, and celebratory confetti.
+### 8 Procedural Widescreen Arenas & Animated Stadium Crowds
 
----
+Eight fully procedural venues, each with its own palette, skyline, and lighting:
 
-### 2. 5-Tier AI Difficulty System
-The AI opponent engine has been expanded from legacy scripts into 5 carefully calibrated tiers:
-1. **Novice**: Accessible entry-level bot with relaxed reaction time, ground returns, and gentle pop-ups.
-2. **Amateur**: Intermediate opponent with balanced court coverage, proactive ball positioning, and gentle jump touches.
-3. **Regular**: Classic competitive baseline (formerly Master / Combot 1.1). Executes touch-0 ground setups, high-jump spike attacks (`sprungattacke`), and net tape roller recovery.
-4. **Master**: Advanced tournament-grade bot featuring defensive recovery, predictive trajectory intercepts, and targeted corner spikes.
-5. **Pro**: Legendary peak difficulty (formerly Reduced Bot). Features aggressive high-play spikes (`highPlayPos = target - 50`), disciplined ground head receives, and emergency diving saves (`panic jump`).
+1. **Copacabana Sunset** — layered sunset sky, low sun with bloom, drifting clouds, animated surf
+   with foam crests, and swaying palms.
+2. **Blobby Grand Arena (Stadium)** — floodlit tournament stadium with tiered stands.
+3. **Neo Cyber Stadium** — synthwave sun, neon grid floor, pulsating laser net.
+4. **Olympic Beach Stadium** — bright championship beach court with an Olympic-scale tribune.
+5. **Classic Beach HD** — a crisp modern tribute to the original Blobby Volley beach.
+6. **Alpine Peaks (Snow)** — snow-capped ridges, pine silhouettes, drifting snowfall.
+7. **Magma Caldera (Volcano)** — glowing lava lakes, crater horizon, heat shimmer, embers.
+8. **Orbital Station (Space)** — starfield, Earth curvature, solar arrays, containment court.
 
----
+Adaptive aspect-ratio scaling covers **16:10, 16:9, and 21:9** without distortion. Floodlights,
+boundary laser bars, and **team-loyal blob spectators** fill the stands — they wear scarves,
+headbands, visors, and pennants, their eyes track the ball, they perform **"La Ola"** waves, and
+they cheer on every point and on victory.
 
-### 3. Settings Menu & Input Handling
-- **Value Cycling**: Change any setting's value via `Left`/`Right` arrow keys when highlighted, OR by clicking directly on the `<` and `>` arrow buttons next to the setting—even if that row is not currently focused.
-- **Confirm & Quick Start**: Pressing `Enter` or `Space`, or clicking anywhere on the center label/body of a setting row, confirms the current configuration and immediately starts the game (without accidentally cycling the value).
-- **Fullscreen Support**: Fullscreen toggle option in the settings menu, as well as `F11` and `Alt+Enter` shortcuts anytime. Aspect ratio is preserved with pristine letterboxing for widescreen (16:10, 16:9, and high-DPI displays).
-- **Player Profiles & Identity**: Persistent player display names stored in `~/.config/blobbyvolley3/config.json`. Displays your custom name in local and online matches, HUD, and victory screen. In 2-Player mode, prompts Player 2 to customize their name (defaulting to "Player 2").
+### Scrolling Perimeter Sponsor Boards
 
----
+The boards surrounding the court scroll continuously and showcase popular open-source Craft apps
+(sorted by GitHub stars) — **PhotoCraft, PdfCraft, FilmCraft, WordCraft, LightCraft, VectorCraft,
+EffectCraft, CADCraft, GridCraft, DesignCraft, FigCraft, DeckCraft, SoundCraft** — alongside
+**Arch Linux, Debian, Fedora, CachyOS, KDE Plasma, Rust, Godot, Blender, FFmpeg, mpv, Git,
+OpenCode, Navidrome, and Neovim**, in the spirit of the original game's Linux distribution
+banners.
 
-### 4. Multiplayer & Zero-Cost Serverless Matchmaking
-- **Zero-Cost P2P Architecture (STUN + LAN Broadcast + Serverless)**:
-  - **STUN NAT Traversal**: Implements standard RFC 5389 STUN protocol querying public Google & Cloudflare STUN servers. Automatically discovers and verifies your public internet endpoint so friends across the world can connect directly with no server middleman.
-  - **Zero-Config LAN Auto-Discovery**: Hosts broadcast beacon packets over UDP port 1235 on local Wi-Fi/Ethernet. Available matches instantly and automatically pop up in opponent's **Server Browser** with 1ms latency.
-  - **Serverless Matchmaking Registry**: Includes a ready-to-deploy Cloudflare Worker (`server/worker.js`) running on Cloudflare's global edge for $0.00/month (100k requests/day free tier).
-  - **Public Server Browser**: Discovers LAN rooms, serverless P2P rooms, and dedicated legacy servers from `blobbyvolley.de`.
-  - **In-Game Chat**: Low-latency in-match chat system (`T` or `C` to chat).
+### Adjustable Court Width & Live Ruler Visualizer
+
+A continuous slider (default `800px`, up to the full screen borders) with **hold-to-repeat**
+arrow buttons. A live world-space caliper/beacon preview shows exactly how wide the court will
+be, and AI trajectories are recalculated for the chosen width so bots cover the space correctly.
+
+### High-Ball Camera Choice
+
+When the ball goes above the visible area, pick your preference:
+
+- **Off-Screen Indicator** — altitude readout plus a vertical laser guide marking the ball's column.
+- **Dynamic Zoom** — the camera pulls back smoothly to keep the ball in frame.
+
+### Physics, Visuals & UX Polish
+
+- **Continuous Collision Detection (CCD)** — no tunnelling at high ball speeds.
+- **Spring-jelly blobs** — volume-preserving squash-and-stretch, gloss highlights, contact shadows.
+- **Expressive eyes** — pupil tracking, blinking, reactions.
+- **3D spinning volleyball** — multi-panel rotation, motion trails, impact VFX, confetti.
+- **Modern (rally-point) & Classic (side-out) rules**, with configurable winning score
+  (`5 / 10 / 15 / 21`).
+- **Touch counter** resets when the ball crosses the net.
+- **Sound Volume slider** (`0%–100%`) plus mute on `M`.
+- **Full mouse & keyboard support**, with hold-to-repeat arrows and Backspace.
+- **Instant local Rematch** directly from the Victory screen.
+
+### 5-Tier Calibrated AI & CPU vs CPU
+
+Five tiers calibrated to Glicko-2 baselines (`1000`–`2000`): **Novice, Amateur, Regular, Master,
+Pro**. Each has its own reaction time, court coverage, spike selection, and recovery behaviour —
+from gentle ground returns to diving panic saves and high-play corner spikes. You can also watch
+**CPU vs CPU** matches.
+
+### Ranked Matchmaking, Leaderboards & Profiles
+
+- **Quick Match** with **Glicko-2** ratings and divisions from **Bronze I** up to **Grandmaster**.
+- **Elo search range** — `Strict ±50`, `Balanced ±100`, `Wide ±250`, `Unrestricted`, with the
+  window expanding by `+1/3` every 5 seconds while you wait.
+- **Live challenge radar** showing nearby opponents and queue activity.
+- **Cross-arena negotiation** — the server picks a deterministic consensus arena; press `Y` to
+  accept, `N` to decline, or `Space` for a 50/50 deterministic coin flip.
+- **Global Leaderboards** on `L`, with **Week / Month / Year** tabs.
+- **250 country badges and flags** with type-ahead search (`GER` → Germany).
+- **LAN UDP auto-discovery** on port `1235` — zero-config local play.
+- **STUN NAT discovery** for direct peer-to-peer connections across the internet.
+- **Optional HTTPS/HTTP registry** via the included Cloudflare Worker (`server/worker.js`).
+- **In-game chat** on `T` or `C`.
+- **Online forfeit handling** — disconnects and forfeits resolve cleanly without hanging matches.
 
 ---
 
@@ -71,31 +99,88 @@ The AI opponent engine has been expanded from legacy scripts into 5 carefully ca
 | **Move Right** | `D` or `Right Arrow` (in 1P) | `Right Arrow` or `L` |
 | **Jump / Spike** | `W`, `Space`, or `Up Arrow` (in 1P) | `Up Arrow`, `I`, `Enter`, or `Right Shift` |
 
-- **In-Game Chat**: `T` or `C` (press `Enter` to send, `Escape` to cancel)
-- **Pause / In-Game Menu**: `Escape` or `P`
-- **Toggle Audio Mute**: `M`
-- **Toggle Fullscreen**: `F11` or `Alt+Enter`
-- **Menu Navigation**: `Up`/`Down` (or `W`/`S`), cycle values with `Left`/`Right` or click `<` / `>`, confirm with `Enter` or row click.
+| Shortcut | Function |
+|---|---|
+| `T` / `C` | In-game chat (`Enter` sends, `Escape` cancels) |
+| `Y` / `N` / `Space` | Accept / decline / coin-flip a cross-arena challenge |
+| `L` | Global leaderboards |
+| `M` | Mute / unmute audio |
+| `Escape` or `P` | Pause / in-game menu |
+| `F11` or `Alt+Enter` | Toggle fullscreen |
+| `Up` / `Down` (or `W` / `S`) | Menu navigation |
+| `Left` / `Right` (or clicking `<` / `>`) | Cycle a setting's value (hold to repeat) |
+| `Enter` / `Space` / row click | Confirm and start |
+
+Settings support direct mouse interaction: click the `<` / `>` arrows on any row — even one that
+is not focused — or click the row body to confirm and immediately play.
 
 ---
 
 ## How to Build & Run
 
+Requires a stable Rust toolchain. On Linux you also need ALSA, X11, and OpenGL headers
+(`libasound2-dev libx11-dev libxi-dev libgl1-mesa-dev` on Debian/Ubuntu; `alsa-lib libx11 libxi`
+on Arch).
+
 ### Quick Run
+
 ```bash
 cargo run --release
 ```
 
 ### Run Tests
+
 ```bash
 cargo test
 ```
 
 ### Build Release Artifacts
+
 ```bash
 cargo build --release
 ```
-The optimized release binary is located at:
-```bash
-./target/release/blobby
-```
+
+The optimized binary is written to `target/release/blobby`.
+
+### Packages
+
+`packaging/build_packages.sh` produces a portable `.tar.gz`, a Debian `.deb`, and the Arch
+`PKGBUILD` in `dist/`. Cross-platform release archives (Linux, Windows, macOS universal) are
+built by `.github/workflows/release.yml`.
+
+---
+
+## License, Attribution & Trademarks
+
+**Blobby Volley 3 is licensed under `GPL-3.0-or-later`.** The full text is in [`COPYING`](COPYING).
+
+This project is an unofficial rewrite of **Blobby Volley 2**
+(<https://github.com/danielknobe/blobbyvolley2>), which is licensed under **`GPL-2.0-or-later`**.
+The original game design, physics constants and simulation (`PhysicWorld.cpp`,
+`GameConstants.h`), Lua bot behaviours (`com_11.lua`, `reduced.lua`, `bot_api.lua`), and sound
+effects (transcoded from `data/sounds/*.wav`) come from that project. Original authors:
+**Jonathan Sieber, Daniel Knobe, Sven Rech, Erik Schultheis, Silvio Mummert, Richard Bertrand**,
+and the Blobby Volley 2 contributors. The combined work is distributed under `GPL-3.0-or-later`
+in accordance with GPLv2 Section 9. This project is not affiliated with or endorsed by the
+upstream authors.
+
+The optional matchmaking worker in `server/worker.js` is dual-licensed under
+**`MIT OR Apache-2.0`**.
+
+Bundled third-party assets keep their own licenses:
+
+- **Roboto Bold** (`rust/assets/fonts/Roboto-Bold.ttf`) — Copyright Google LLC, `Apache-2.0`.
+- **Craft app icons** (`rust/assets/sponsors/*.png`) — `MIT OR Apache-2.0`.
+- **Rust crates** — permissive licenses recorded in `Cargo.lock` (MIT, Apache-2.0,
+  BSD-3-Clause, Zlib, 0BSD, Unlicense).
+
+See [`THIRD_PARTY_LICENSES.md`](THIRD_PARTY_LICENSES.md) for the complete attribution and license
+breakdown.
+
+**Trademark notice.** All third-party project, distribution, application, and product names,
+logos, and icons shown in this repository, in the game UI, or on the in-game perimeter sponsor
+boards — including the Craft apps, Arch Linux, Debian, Fedora, CachyOS, KDE Plasma, Rust, Godot,
+Blender, FFmpeg, mpv, Git, OpenCode, Navidrome, and Neovim — are the trademarks or property of
+their respective owners. They are used for identification and attribution only. Their use does
+not imply any affiliation with, endorsement of, or sponsorship by those projects, nor does it
+imply that they endorse Blobby Volley 3.
