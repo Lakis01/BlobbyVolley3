@@ -6,3 +6,16 @@
 *.deb
 *.zip
 .DS_Store
+
+# Local agent harness configurations & scratch files
+.opencode/
+opencode.json
+opencode.jsonc
+instructions.md
+AGENTS.md
+CLAUDE.md
+GEMINI.md
+.gemini/
+.impeccable/
+.superpowers/
+docs/superpowers/
